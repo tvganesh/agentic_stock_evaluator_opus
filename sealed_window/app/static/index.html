@@ -1,0 +1,269 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sealed Window</title>
+<!--
+  Sealed Window front end. Thin by design: it edits screen sliders, shows the compiled spend
+  plan for approval, polls run state (seal indicator, spend, claim ledger) and renders the
+  dossier. All model- and news-derived text is inserted with textContent, never innerHTML.
+-->
+<style>
+  :root { --bg:#f4f5f1; --panel:#fff; --ink:#18201b; --muted:#667066; --rule:#d6dad2; --accent:#14605b;
+          --live:#8a4a12; --bad:#9a3122; --good:#1d6b3a; }
+  * { box-sizing: border-box; }
+  body { margin:0; font:14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; color:var(--ink); background:var(--bg); }
+  header { display:flex; flex-wrap:wrap; gap:12px; align-items:center; justify-content:space-between;
+           padding:12px 20px; border-bottom:1px solid var(--rule); background:var(--panel); }
+  header h1 { font-size:16px; margin:0; letter-spacing:.04em; }
+  .badges { display:flex; flex-wrap:wrap; gap:8px; }
+  .badge { font:12px ui-monospace, Menlo, monospace; padding:3px 8px; border:1px solid var(--rule); border-radius:3px; }
+  .badge.sealed { color:var(--accent); border-color:var(--accent); }
+  .badge.live { color:var(--live); border-color:var(--live); }
+  .layout { display:grid; grid-template-columns: 320px 1fr; gap:16px; padding:16px 20px; }
+  @media (max-width: 860px) { .layout { grid-template-columns: 1fr; } }
+  aside, section { background:var(--panel); border:1px solid var(--rule); padding:14px; }
+  section + section { margin-top:16px; }
+  h2 { font-size:13px; text-transform:uppercase; letter-spacing:.08em; margin:0 0 10px; color:var(--muted); }
+  .tabs { display:flex; gap:4px; margin:10px 0; }
+  .tabs button { flex:1; padding:6px; border:1px solid var(--rule); background:var(--bg); cursor:pointer; }
+  .tabs button.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .slider { margin:10px 0; }
+  .slider label { display:flex; justify-content:space-between; gap:8px; font-size:13px; }
+  .slider input[type=range] { width:100%; }
+  .slider .val { font-family:ui-monospace, Menlo, monospace; color:var(--muted); }
+  select, input[type=number] { width:100%; padding:4px; }
+  button.primary { width:100%; margin-top:10px; padding:8px; background:var(--accent); color:#fff; border:0; cursor:pointer; }
+  button.primary:disabled { opacity:.5; cursor:default; }
+  pre { background:var(--bg); padding:10px; overflow-x:auto; font-size:12px; }
+  table { border-collapse:collapse; width:100%; font-size:12.5px; }
+  .tscroll { overflow-x:auto; }
+  th, td { text-align:left; padding:5px 6px; border-bottom:1px solid var(--rule); vertical-align:top; }
+  td.dead { text-decoration:line-through; color:var(--muted); }
+  .verdict-survived { color:var(--good); } .verdict-pending { color:var(--muted); }
+  .verdict-refuted, .verdict-vetoed, .verdict-vacuous, .verdict-rejected, .verdict-unevaluable { color:var(--bad); }
+  .pick { border-top:1px solid var(--rule); padding:10px 0; }
+  .pick h3 { margin:0 0 4px; font-size:15px; }
+  .warn { color:var(--bad); font-weight:600; }
+  code { font-size:12px; }
+  .muted { color:var(--muted); }
+</style>
+</head>
+<body>
+<header>
+  <h1>SEALED WINDOW · NSE research · no order placement</h1>
+  <div class="badges" id="seal"></div>
+</header>
+<div class="layout">
+  <aside>
+    <h2>Snapshot</h2>
+    <select id="snapshot"></select>
+    <div class="tabs"><button data-tab="fundamental" class="active">Fundamental</button><button data-tab="technical">Technical</button></div>
+    <div id="sliders"></div>
+    <h2 style="margin-top:14px">Run shape</h2>
+    <label>Max candidates <input type="number" id="max_candidates" min="1" max="150" value="20"></label>
+    <label>Model <select id="model_mode"><option value="offline">offline heuristic (no API)</option><option value="anthropic">Anthropic API</option></select></label>
+    <label>Ceiling USD (optional) <input type="number" id="ceiling_usd" min="0" step="0.5"></label>
+    <button class="primary" id="compile">Compile spend plan</button>
+    <button class="primary" id="approve" disabled>Approve and run</button>
+    <p class="muted" id="hint">Sliders feed the deterministic screen only. They never reach a prompt.</p>
+  </aside>
+  <main>
+    <section><h2>Spend plan</h2><div id="plan" class="muted">Compile a plan to see the committed total.</div></section>
+    <section><h2>Run</h2><div id="run" class="muted">No run yet.</div></section>
+    <section><h2>Claim ledger</h2><div class="tscroll"><table id="ledger"><thead><tr><th>Symbol</th><th>Dim</th><th>Dir</th><th>Claim</th><th>Falsifier</th><th>Verdict</th></tr></thead><tbody></tbody></table></div></section>
+    <section><h2>Dossier</h2><div id="dossier" class="muted">Published picks appear here.</div></section>
+  </main>
+</div>
+<script>
+"use strict";
+const $ = (id) => document.getElementById(id);
+const el = (tag, text, cls) => { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (cls) e.className = cls; return e; };
+let schema = null, compiled = null, pollTimer = null, activeTab = "fundamental", runModel = null;
+const MODEL_LABELS = {anthropic: "Anthropic API (real, billed)", offline: "offline model (free, not an LLM)"};
+
+function updateApprove() {
+  // The approve button always names the model it will use, so an offline run is never mistaken for a Claude run.
+  if (!compiled) return;
+  const mode = $("model_mode").value;
+  $("approve").textContent = mode === "anthropic"
+    ? `Approve ${compiled.committed} and run with ${MODEL_LABELS.anthropic}`
+    : `Run with ${MODEL_LABELS.offline}`;
+}
+
+async function api(path, body) {
+  // Call the JSON API; throws with the server's detail on non-2xx.
+  const res = await fetch(path, body ? {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body)} : {});
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail));
+  return data;
+}
+
+function renderSeal(seal, phase) {
+  // Seal indicator: the invariant rendered as live status.
+  const box = $("seal"); box.replaceChildren();
+  box.append(el("span", "phase: " + (phase || "idle"), "badge"));
+  box.append(el("span", "upstox network: " + (seal.network_live ? "LIVE" : "sealed"), "badge " + (seal.network_live ? "live" : "sealed")));
+  box.append(el("span", "model: " + (seal.model_running ? "running" : "none"), "badge " + (seal.model_running ? "live" : "sealed")));
+  box.append(el("span", "mode: " + seal.mode, "badge"));
+}
+
+function renderSliders() {
+  // Build slider rows for the active tab; each has an enable checkbox because unset means "filter off".
+  const box = $("sliders"); box.replaceChildren();
+  for (const s of schema.sliders.filter((s) => s.tab === activeTab)) {
+    const row = el("div", undefined, "slider");
+    const label = el("label"); const name = el("span");
+    const on = document.createElement("input"); on.type = "checkbox"; on.id = "on_" + s.field; on.checked = s.suggested !== null;
+    name.append(on, " " + s.label);
+    const val = el("span", "", "val");
+    const range = document.createElement("input"); range.type = "range"; range.id = s.field;
+    Object.assign(range, {min: s.minimum, max: s.maximum, step: s.step, value: s.suggested ?? s.minimum});
+    const sync = () => { val.textContent = on.checked ? range.value + s.unit : "off"; };
+    range.oninput = sync; on.onchange = sync; sync();
+    label.append(name, val); row.append(label, range); box.append(row);
+  }
+  for (const t of schema.toggles.filter((t) => t.tab === activeTab)) {
+    const row = el("div", undefined, "slider");
+    const sel = document.createElement("select"); sel.id = t.field;
+    for (const [v, text] of [["", "off"], ["true", "above"], ["false", "below"]]) { const o = el("option", text); o.value = v; sel.append(o); }
+    row.append(el("label", t.label), sel); box.append(row);
+  }
+}
+
+const sliderState = {};
+function captureTab() {
+  // Remember values of the currently rendered tab before switching.
+  for (const s of schema.sliders.filter((s) => s.tab === activeTab)) {
+    sliderState[s.field] = $("on_" + s.field).checked ? Number($(s.field).value) : null;
+  }
+  for (const t of schema.toggles.filter((t) => t.tab === activeTab)) {
+    sliderState[t.field] = $(t.field).value === "" ? null : $(t.field).value === "true";
+  }
+}
+
+function screenConfig() {
+  // Collect the full screen config across both tabs.
+  captureTab();
+  const cfg = {max_candidates: Number($("max_candidates").value)};
+  for (const s of schema.sliders) {
+    if (s.field in sliderState) { if (sliderState[s.field] !== null) cfg[s.field] = sliderState[s.field]; }
+    else if (s.suggested !== null) cfg[s.field] = s.suggested;
+  }
+  for (const t of schema.toggles) if (sliderState[t.field] !== undefined && sliderState[t.field] !== null) cfg[t.field] = sliderState[t.field];
+  return cfg;
+}
+
+function body() {
+  // Common request body for plan and run.
+  const b = {snapshot_hash: $("snapshot").value, config: screenConfig()};
+  if ($("ceiling_usd").value) b.ceiling_usd = Number($("ceiling_usd").value);
+  return b;
+}
+
+async function compilePlan() {
+  // Screen + compile; show the committed number the operator approves.
+  $("approve").disabled = true;
+  try {
+    compiled = await api("/api/plan", body());
+    const box = $("plan"); box.replaceChildren();
+    if (compiled.synthetic_data) box.append(el("p", "Synthetic fixture snapshot — not real market data.", "warn"));
+    box.append(el("p", `as_of ${compiled.as_of} · prices to ${compiled.prices_as_of ?? "unknown"} · ${compiled.screen.candidates} candidates: ${compiled.candidates.join(", ")}`));
+    if (compiled.prices_as_of && compiled.prices_as_of !== compiled.as_of) box.append(el("p", `Prices end ${compiled.prices_as_of}, before as_of (normal for weekends/holidays; otherwise a session is missing).`, "warn"));
+    box.append(el("pre", compiled.table));
+    updateApprove();
+    $("approve").disabled = compiled.screen.candidates === 0;
+  } catch (e) { $("plan").textContent = "Plan refused: " + e.message; }
+}
+
+async function startRun() {
+  // Start a run with the exact plan hash just shown.
+  $("approve").disabled = true;
+  try {
+    const b = body(); b.approved_plan_hash = compiled.plan_hash; b.model_mode = $("model_mode").value;
+    runModel = b.model_mode;
+    const started = await api("/api/runs", b);
+    poll(started.run_id);
+  } catch (e) { $("run").textContent = "Run refused: " + e.message; }
+}
+
+function poll(runId) {
+  // Poll run state every second until it finishes.
+  clearInterval(pollTimer);
+  const tick = async () => {
+    const s = await api("/api/runs/" + runId);
+    renderSeal(s.seal, s.phase);
+    const box = $("run"); box.replaceChildren();
+    box.append(el("p", `run ${s.run_id} · status ${s.status} · phase ${s.phase}`));
+    if (runModel) box.append(el("p", `model: ${MODEL_LABELS[runModel]}`, runModel === "anthropic" ? "" : "warn"));
+    if (s.spend) box.append(el("p", runModel === "offline"
+      ? `simulated spend ${s.spend.spent} (nothing billed; this is what the token counts would cost on Claude)`
+      : `spend ${s.spend.spent} of ${s.spend.committed} committed`));
+    if (s.error) box.append(el("p", s.error, "warn"));
+    renderLedger(s.claims || []);
+    if (s.dossier) renderDossier(s.dossier);
+    if (s.status !== "running") { clearInterval(pollTimer); $("approve").disabled = false; }
+  };
+  pollTimer = setInterval(tick, 1000); tick();
+}
+
+function renderLedger(rows) {
+  // Claims appear, then are struck through as adjudication kills them.
+  const tbody = $("ledger").querySelector("tbody"); tbody.replaceChildren();
+  for (const r of rows) {
+    const tr = document.createElement("tr");
+    const dead = !["survived", "pending"].includes(r.verdict);
+    tr.append(el("td", r.symbol), el("td", r.dimension), el("td", r.direction), el("td", r.statement, dead ? "dead" : ""),
+              el("td", r.falsifier), el("td", r.verdict + (r.reason ? " — " + r.reason : ""), "verdict-" + r.verdict));
+    tbody.append(tr);
+  }
+}
+
+function renderDossier(d) {
+  // Picks with surviving claims, each with its falsifier attached.
+  const box = $("dossier"); box.replaceChildren();
+  const h = d.header;
+  box.append(el("p", `As of ${h.as_of} · prices to ${h.prices_as_of ?? "unknown"} · snapshot ${h.reproducibility.snapshot.slice(0, 12)}… · screen ${h.reproducibility.screen_config.slice(0, 12)}… · plan ${h.reproducibility.plan.slice(0, 12)}…`));
+  if (h.synthetic_data) box.append(el("p", "SYNTHETIC DATA — not real companies or prices.", "warn"));
+  if (h.model_client !== "anthropic") box.append(el("p", `Model client: ${h.model_client} (not an LLM).`, "warn"));
+  if (h.abstention) box.append(el("p", h.abstention, "warn"));
+  for (const p of d.picks.concat(d.avoid)) {
+    const card = el("div", undefined, "pick");
+    card.append(el("h3", `${p.trading_symbol} — ${p.recommendation} (score ${p.score.toFixed(2)})`));
+    const ul = document.createElement("ul");
+    for (const c of p.surviving_claims) {
+      const li = el("li", `[${c.dimension}, ${c.direction}, ${c.confidence.toFixed(2)}] ${c.statement} `);
+      li.append(el("code", "wrong if: " + c.falsifier)); ul.append(li);
+    }
+    for (const c of p.refuted_or_vetoed_claims) { const li = el("li", `${c.verdict}: ${c.statement} — ${c.reason}`, "dead"); ul.append(li); }
+    card.append(ul); box.append(card);
+  }
+  box.append(el("p", h.disclaimer, "muted"));
+}
+
+async function init() {
+  // Load governance status, snapshots and the slider schema.
+  const [gov, snaps] = await Promise.all([api("/api/governance"), api("/api/snapshots")]);
+  schema = await api("/api/screen/schema");
+  renderSeal(gov.seal, null);
+  for (const s of snaps) { const o = el("option", `${s.as_of} · ${s.source} · ${s.universe_size} · ${s.root_hash.slice(0, 10)}…`); o.value = s.root_hash; $("snapshot").append(o); }
+  if (!snaps.length) $("hint").textContent = "No snapshots yet: run `python -m sealed_window acquire` first.";
+  document.querySelectorAll(".tabs button").forEach((b) => b.onclick = () => {
+    captureTab(); activeTab = b.dataset.tab;
+    document.querySelectorAll(".tabs button").forEach((x) => x.classList.toggle("active", x === b));
+    renderSliders();
+    for (const [field, value] of Object.entries(sliderState)) {
+      const input = $(field); const on = $("on_" + field);
+      if (on) { on.checked = value !== null; if (value !== null) input.value = value; input.oninput(); }
+      else if (input) input.value = value === null ? "" : String(value);
+    }
+  });
+  renderSliders();
+  $("compile").onclick = compilePlan; $("approve").onclick = startRun;
+  $("model_mode").onchange = updateApprove;
+}
+init();
+</script>
+</body>
+</html>

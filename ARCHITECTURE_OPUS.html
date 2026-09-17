@@ -1,0 +1,555 @@
+<title>Sealed Window Stock Evaluator</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@400;500&family=Spectral:ital,wght@0,400;0,600;1,400&display=swap">
+<style>
+:root{
+  --paper:#eef1ec;
+  --surface:#f9faf7;
+  --surface-2:#e2e7dd;
+  --ink:#141a16;
+  --ink-2:#3a423b;
+  --muted:#6c756b;
+  --rule:#d1d7cb;
+  --rule-strong:#aeb6a7;
+  --accent:#14605b;
+  --accent-2:#1a7a73;
+  --sealed-bg:#d8e7e3;
+  --seal:#9a3122;
+  --seal-bg:#f3e2de;
+  --live:#8a4a12;
+  --live-bg:#f4e8d6;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#0d1211;
+    --surface:#161b19;
+    --surface-2:#1e2422;
+    --ink:#e2e8e3;
+    --ink-2:#b3bcb5;
+    --muted:#818b82;
+    --rule:#27302c;
+    --rule-strong:#3a443f;
+    --accent:#5fb8ae;
+    --accent-2:#83cec5;
+    --sealed-bg:#152825;
+    --seal:#e08575;
+    --seal-bg:#2c1a17;
+    --live:#d9a45f;
+    --live-bg:#2a2014;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0d1211;
+  --surface:#161b19;
+  --surface-2:#1e2422;
+  --ink:#e2e8e3;
+  --ink-2:#b3bcb5;
+  --muted:#818b82;
+  --rule:#27302c;
+  --rule-strong:#3a443f;
+  --accent:#5fb8ae;
+  --accent-2:#83cec5;
+  --sealed-bg:#152825;
+  --seal:#e08575;
+  --seal-bg:#2c1a17;
+  --live:#d9a45f;
+  --live-bg:#2a2014;
+}
+
+*{box-sizing:border-box}
+body{
+  background:var(--paper);color:var(--ink);
+  font-family:Spectral,Georgia,"Times New Roman",serif;
+  font-size:17px;line-height:1.66;
+  padding-inline:20px;padding-block:0 76px;
+  -webkit-font-smoothing:antialiased;
+}
+.wrap{max-width:980px;margin-inline:auto}
+h1,h2,h3,.ui{font-family:"IBM Plex Sans Condensed","Helvetica Neue",Arial,sans-serif}
+h2,h3{text-wrap:balance}
+code,pre,.mono{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+code{font-size:.82em;background:var(--surface-2);padding:.1em .34em;border:1px solid var(--rule)}
+a{color:var(--accent-2)}
+p{margin:0 0 1em;max-width:68ch}
+ul,ol{margin:0 0 1.1em;padding-left:1.25em;max-width:68ch}
+li{margin-bottom:.45em}
+li::marker{color:var(--accent)}
+strong{font-weight:600;color:var(--ink)}
+
+/* masthead */
+header.mast{padding-block:58px 24px;border-bottom:1px solid var(--rule-strong)}
+.eyebrow{
+  font-family:"IBM Plex Sans Condensed",sans-serif;font-size:12px;font-weight:600;
+  letter-spacing:.2em;text-transform:uppercase;color:var(--accent);margin-bottom:20px;
+}
+h1{
+  font-size:clamp(40px,8vw,76px);font-weight:700;letter-spacing:-.01em;
+  line-height:.98;margin:0 0 18px;text-transform:uppercase;
+}
+h1 .l2{display:block;color:var(--muted);font-weight:500}
+.sub{font-size:1.16em;color:var(--ink-2);max-width:58ch;margin:0 0 26px}
+.metastrip{
+  display:flex;flex-wrap:wrap;gap:6px 30px;
+  font-family:"JetBrains Mono",monospace;font-size:11.5px;color:var(--muted);
+}
+.metastrip div{display:flex;gap:8px}
+.metastrip b{font-weight:500;color:var(--ink-2)}
+
+/* pillars */
+.pillars{display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:var(--rule);border:1px solid var(--rule);margin:34px 0 0}
+.pillar{background:var(--surface);padding:20px 22px}
+.pillar .pn{
+  font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--accent);
+  letter-spacing:.1em;margin-bottom:10px;
+}
+.pillar h3{margin:0 0 8px;font-size:19px;font-weight:600;letter-spacing:-.005em}
+.pillar p{margin:0;font-size:14.5px;color:var(--ink-2);line-height:1.55}
+@media (max-width:760px){.pillars{grid-template-columns:1fr}}
+
+/* phase blocks */
+section.ph{margin-top:44px}
+.phbar{
+  display:flex;flex-wrap:wrap;align-items:center;gap:12px 16px;
+  border-top:2px solid var(--ink);padding-top:12px;margin-bottom:18px;
+}
+.phnum{
+  font-family:"JetBrains Mono",monospace;font-size:12px;font-weight:500;
+  color:var(--muted);letter-spacing:.08em;
+}
+.phname{
+  font-family:"IBM Plex Sans Condensed",sans-serif;font-size:13px;font-weight:700;
+  letter-spacing:.18em;text-transform:uppercase;color:var(--ink);flex:1 1 auto;
+}
+.states{display:flex;gap:8px;flex-wrap:wrap}
+.st{
+  font-family:"JetBrains Mono",monospace;font-size:10.5px;font-weight:500;
+  padding:3px 9px;white-space:nowrap;border:1px solid transparent;
+}
+.st.off{background:var(--surface-2);color:var(--muted);border-color:var(--rule)}
+.st.sealed{background:var(--sealed-bg);color:var(--accent);border-color:var(--accent)}
+.st.on{background:var(--live-bg);color:var(--live);border-color:var(--live)}
+.st.hot{background:var(--seal-bg);color:var(--seal);border-color:var(--seal)}
+
+h2{font-size:clamp(25px,3.6vw,34px);font-weight:600;letter-spacing:-.018em;line-height:1.12;margin:0 0 .55em}
+h3{font-size:16.5px;font-weight:600;margin:1.9em 0 .5em;color:var(--ink)}
+
+.pull{
+  border-left:3px solid var(--accent);background:var(--surface);
+  padding:18px 22px;margin:0 0 1.4em;font-size:1.06em;
+}
+.pull p:last-child{margin-bottom:0}
+.pull.warn{border-left-color:var(--seal)}
+.note{background:var(--surface);border:1px solid var(--rule);padding:16px 19px;margin:.4em 0 1.4em;font-size:.95em;color:var(--ink-2)}
+.note p:last-child{margin-bottom:0}
+
+/* code */
+pre{
+  background:var(--surface);border:1px solid var(--rule);
+  padding:16px 18px;margin:0 0 1.5em;overflow-x:auto;
+  font-size:12.5px;line-height:1.62;color:var(--ink-2);
+}
+pre b{color:var(--ink);font-weight:500}
+pre .c{color:var(--accent)}
+pre .r{color:var(--seal)}
+
+/* tables */
+.tscroll{overflow-x:auto;margin:0 0 1.5em;border:1px solid var(--rule);background:var(--surface)}
+table{border-collapse:collapse;width:100%;font-size:14.5px;min-width:520px}
+thead th{
+  font-family:"IBM Plex Sans Condensed",sans-serif;font-size:11px;font-weight:600;
+  letter-spacing:.14em;text-transform:uppercase;color:var(--accent);
+  text-align:left;padding:11px 16px;border-bottom:1px solid var(--rule-strong);white-space:nowrap;
+}
+td{padding:11px 16px;border-bottom:1px solid var(--rule);vertical-align:top;color:var(--ink-2)}
+tbody tr:last-child td{border-bottom:0}
+td.k{color:var(--ink);font-weight:600;font-family:"IBM Plex Sans Condensed",sans-serif;font-size:14.5px;white-space:nowrap}
+td .mono{font-size:12.5px}
+
+/* timing diagram */
+figure{margin:0 0 1.7em}
+figcaption{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:12.5px;color:var(--muted);margin-top:11px}
+.figbox{background:var(--surface);border:1px solid var(--rule);padding:22px 18px;overflow-x:auto}
+svg.timing{display:block;width:100%;min-width:560px;max-width:720px;margin-inline:auto;height:auto}
+.t-trace{fill:none;stroke:var(--accent);stroke-width:2.2;stroke-linejoin:miter}
+.t-trace.m{stroke:var(--live)}
+.t-div{stroke:var(--rule-strong);stroke-width:1;stroke-dasharray:2 4}
+.t-axis{stroke:var(--rule-strong);stroke-width:1}
+.t-row{fill:var(--ink);font-family:"IBM Plex Sans Condensed",sans-serif;font-size:11.5px;font-weight:700;letter-spacing:.13em;text-anchor:end}
+.t-state{fill:var(--muted);font-family:"JetBrains Mono",monospace;font-size:10px;text-anchor:middle}
+.t-ph{fill:var(--ink);font-family:"IBM Plex Sans Condensed",sans-serif;font-size:11.5px;font-weight:700;letter-spacing:.06em;text-anchor:middle}
+.t-sub{fill:var(--muted);font-family:"JetBrains Mono",monospace;font-size:9.5px;text-anchor:middle}
+.t-seal{fill:var(--seal)}
+.t-sealtxt{fill:var(--seal);font-family:"IBM Plex Sans Condensed",sans-serif;font-size:10px;font-weight:700;letter-spacing:.12em}
+
+/* decisions */
+.dec{display:grid;grid-template-columns:auto 1fr;gap:0 16px;padding:18px 0;border-top:1px solid var(--rule)}
+.dec:last-child{border-bottom:1px solid var(--rule)}
+.dn{font-family:"JetBrains Mono",monospace;font-size:12px;font-weight:500;color:var(--accent);padding-top:5px}
+.dq{font-family:"IBM Plex Sans Condensed",sans-serif;font-size:17px;font-weight:600;color:var(--ink);margin:0 0 6px}
+.db{font-size:15px;color:var(--ink-2);margin:0;max-width:64ch}
+.rec{
+  display:inline-block;margin-top:9px;font-family:"JetBrains Mono",monospace;font-size:10.5px;
+  color:var(--accent);background:var(--sealed-bg);padding:3px 9px;border:1px solid var(--accent);
+}
+
+footer{
+  margin-top:50px;padding-top:20px;border-top:2px solid var(--ink);
+  font-family:"JetBrains Mono",monospace;font-size:11px;color:var(--muted);
+  display:flex;flex-wrap:wrap;gap:8px 28px;
+}
+@media (prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important}}
+:focus-visible{outline:2px solid var(--accent-2);outline-offset:2px}
+</style>
+
+<div class="wrap">
+
+<header class="mast">
+  <div class="eyebrow">Architecture proposal &middot; Independent design</div>
+  <h1>Sealed<span class="l2">Window</span></h1>
+  <p class="sub">An NSE equity research system whose governing property is not that the agents are sandboxed, but that <strong>the agents run offline</strong>. When a model is running, there is no network. When the network is live, there is no model.</p>
+  <div class="metastrip">
+    <div><b>Status</b> Proposal &mdash; no code written</div>
+    <div><b>Date</b> 13 Sep 2026</div>
+    <div><b>Data</b> Upstox Analytics, via non-agentic ETL</div>
+    <div><b>Models</b> Opus 5 / Sonnet 5 / Haiku 4.5</div>
+  </div>
+  <div class="pillars">
+    <div class="pillar">
+      <div class="pn">PILLAR 01</div>
+      <h3>Sealed window</h3>
+      <p>Network access exists in exactly one phase, and no model is loaded during it. Agents only ever read a frozen, content-addressed snapshot.</p>
+    </div>
+    <div class="pillar">
+      <div class="pn">PILLAR 02</div>
+      <h3>Falsifiable claims</h3>
+      <p>Agents produce typed claims carrying machine-checkable falsifiers. A deterministic adjudicator kills the ones that fail. No model computes the ranking.</p>
+    </div>
+    <div class="pillar">
+      <div class="pn">PILLAR 03</div>
+      <h3>Prepaid spend</h3>
+      <p>The whole cost of a run is compiled and committed before the first model call. Not a meter that trips at a ceiling &mdash; a plan with no headroom.</p>
+    </div>
+  </div>
+</header>
+
+<section class="ph">
+  <div class="phbar"><span class="phnum">01</span><span class="phname">The invariant</span></div>
+  <div class="pull">
+    <p><strong><code>NETWORK_LIVE</code> and <code>MODEL_RUNNING</code> are never simultaneously true.</strong></p>
+  </div>
+  <p>Everything in this document is downstream of that one line. It is worth drawing as a timing diagram, because that is what it is.</p>
+  <figure>
+    <div class="figbox">
+      <svg class="timing" viewBox="0 0 720 264" role="img" aria-label="Timing diagram across six phases. The network trace is high only during phase 1, Acquire, then low for phases 2 through 6. The model trace is low in phases 1 and 2, high in phase 3 Claim, low in phase 4 Adjudicate, high in phase 5 Veto, and low in phase 6 Publish. The two traces are never high at the same time.">
+        <line class="t-div" x1="200" y1="38" x2="200" y2="212"></line>
+        <line class="t-div" x1="300" y1="38" x2="300" y2="212"></line>
+        <line class="t-div" x1="400" y1="38" x2="400" y2="212"></line>
+        <line class="t-div" x1="500" y1="38" x2="500" y2="212"></line>
+        <line class="t-div" x1="600" y1="38" x2="600" y2="212"></line>
+        <line class="t-axis" x1="100" y1="212" x2="700" y2="212"></line>
+
+        <text class="t-row" x="88" y="78">NETWORK</text>
+        <path class="t-trace" d="M100,54 L200,54 L200,94 L700,94"></path>
+        <text class="t-state" x="150" y="46">LIVE</text>
+        <text class="t-state" x="260" y="86">SEALED</text>
+
+        <polygon class="t-seal" points="200,94 206,102 200,110 194,102"></polygon>
+        <text class="t-sealtxt" x="212" y="106">SEAL DROPS</text>
+
+        <text class="t-row" x="88" y="178">MODEL</text>
+        <path class="t-trace m" d="M100,194 L300,194 L300,154 L400,154 L400,194 L500,194 L500,154 L600,154 L600,194 L700,194"></path>
+        <text class="t-state" x="150" y="186">none</text>
+        <text class="t-state" x="350" y="146">running</text>
+        <text class="t-state" x="450" y="186">none</text>
+        <text class="t-state" x="550" y="146">running</text>
+        <text class="t-state" x="650" y="186">none</text>
+
+        <text class="t-ph" x="150" y="232">1 ACQUIRE</text><text class="t-sub" x="150" y="248">ETL</text>
+        <text class="t-ph" x="250" y="232">2 SCREEN</text><text class="t-sub" x="250" y="248">deterministic</text>
+        <text class="t-ph" x="350" y="232">3 CLAIM</text><text class="t-sub" x="350" y="248">agents</text>
+        <text class="t-ph" x="450" y="232">4 ADJUDICATE</text><text class="t-sub" x="450" y="248">deterministic</text>
+        <text class="t-ph" x="550" y="232">5 VETO</text><text class="t-sub" x="550" y="248">auditor</text>
+        <text class="t-ph" x="650" y="232">6 PUBLISH</text><text class="t-sub" x="650" y="248">deterministic</text>
+      </svg>
+    </div>
+    <figcaption>The seal drops at the end of phase 1 and does not lift for the rest of the run. The two traces never go high together &mdash; that is the whole design.</figcaption>
+  </figure>
+
+  <h3>Why this is a stronger claim than &ldquo;the agent may only issue GET&rdquo;</h3>
+  <ul>
+    <li><strong>It is cheaper to prove.</strong> &ldquo;This process has no network&rdquo; is a socket-level assertion, or a network namespace with no route. &ldquo;This process may only issue <code>GET</code> to these seventeen paths&rdquo; is a reference monitor you have to write, configure, keep current, and trust.</li>
+    <li><strong>Exfiltration stops being possible rather than stopping being allowed.</strong> The worst outcome of a successful prompt injection is a bad claim &mdash; which phase 4 exists to kill. There is no channel to leak to, so there is no leak to prevent.</li>
+    <li><strong>Reproducibility is free.</strong> The snapshot hash fully determines the inputs. Two runs over the same snapshot with the same spend plan produce the same dossier, bit for bit, which is what makes the backtest and the regression suite mean anything.</li>
+    <li><strong>&ldquo;Which endpoints?&rdquo; becomes a code-review question, not a runtime one.</strong> The ETL is a fixed set of queries in reviewed code with no model near it. There is no agent deciding what to fetch, so there is nothing to constrain at request time.</li>
+  </ul>
+
+  <h3>The cost of this design, stated plainly</h3>
+  <div class="pull warn">
+    <p><strong>It cannot answer an intraday question.</strong> If you want to know why HDFC Bank is down 4% <em>right now</em>, the sealed window fights you: you have to re-seal a fresh snapshot, which makes the ETL latency-critical and turns a nightly batch into an on-demand service. That is a real tradeoff, and the main thing to weigh before choosing this over a live-confinement design.</p>
+  </div>
+</section>
+
+<section class="ph">
+  <div class="phbar">
+    <span class="phnum">02</span><span class="phname">Phase 1 &mdash; Acquire</span>
+    <span class="states"><span class="st off">model: none</span><span class="st hot">network: LIVE</span></span>
+  </div>
+  <p>A scheduled, deterministic ETL. No LLM is loaded in this process; no agent exists yet. It reads the Upstox Analytics API and materialises a <strong>sealed snapshot</strong>.</p>
+  <div class="tscroll">
+    <table>
+      <thead><tr><th>Property</th><th>Detail</th></tr></thead>
+      <tbody>
+        <tr><td class="k">Credential</td><td><span class="mono">UPSTOX_ANALYTICS_TOKEN</span>, read-only by issue. Lives only in the ETL process.</td></tr>
+        <tr><td class="k">Queries</td><td>A fixed, code-reviewed set. Adding one is a pull request, not a config toggle.</td></tr>
+        <tr><td class="k">Output</td><td>Content-addressed, immutable, with a manifest and an <span class="mono">as_of</span> timestamp.</td></tr>
+        <tr><td class="k">Seal</td><td>On completion the snapshot is written read-only and its root hash recorded.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <h3>What a snapshot contains</h3>
+<pre><b>snapshot/4c1f8a02&hellip;8ae2/</b>
+  manifest.json          as_of, Upstox API version, query-set hash, row counts
+  instruments.parquet    NSE equity master
+  candles/               daily OHLCV, 500 sessions, adjusted + unadjusted
+  fundamentals.parquet   quarterly and annual, 12 periods
+  news/                  headlines + bodies, 30-day window, per instrument
+  derived.parquet        <span class="c">RSI, MACD, ATR, MA20/50/200, volatility, volume ratio,
+                         ROE, ROIC, D/E, growth rates &mdash; all computed here</span></pre>
+  <p><strong>Every number the system will ever reason about is computed in phase 1.</strong> Not because a model would be careless with arithmetic, but because a number computed inside the sealed window would have no provenance &mdash; nothing to hash, nothing to replay, nothing for a falsifier to check against.</p>
+  <p>Each row carries <code>evidence_id = blake3(query, params, as_of, row_key)</code>. Evidence IDs are the only way anything downstream is permitted to refer to a fact.</p>
+</section>
+
+<section class="ph">
+  <div class="phbar">
+    <span class="phnum">03</span><span class="phname">Phase 2 &mdash; Screen</span>
+    <span class="states"><span class="st off">model: none</span><span class="st sealed">network: sealed</span></span>
+  </div>
+  <p>The snapshot plus the user&rsquo;s screen configuration produces a candidate set, purely by filtering. This is the phase the UI sliders drive.</p>
+  <p>The screen config is hashed and recorded. Together with the snapshot hash it already determines the candidate set with no model involved &mdash; so a disputed shortlist can be reproduced exactly, before any question of model behaviour arises.</p>
+  <h3>The spend plan is compiled here</h3>
+  <p>Candidate counts are now known, so the exact shape of the run is known. The compiler emits a plan and freezes it.</p>
+<pre>plan <b>3e91b4&hellip;</b>  &middot;  snapshot <b>4c1f8a02&hellip;8ae2</b>  &middot;  screen cfg <b>91b07c&hellip;</b>
+compiled 2026-09-13T09:12:04+05:30
+
+slot class         model              calls   max_in   max_out   committed
+──────────────────────────────────────────────────────────────────────────
+triage             claude-haiku-4-5     148    1,800       320       $0.50
+deep.fundamental   claude-sonnet-5       31   11,000     1,800       $1.24
+deep.technical     claude-sonnet-5       31    6,500     1,200       $0.78
+deep.news          claude-haiku-4-5      31    9,000       700       $0.39
+probe reserve      claude-haiku-4-5      20    4,000       600       $0.14
+synthesis          claude-opus-5          3   74,000    14,000       $2.16
+veto               claude-sonnet-5        1   38,000     3,000       $0.11
+──────────────────────────────────────────────────────────────────────────
+                                     <b>committed total             $5.32</b>
+                                     <b>hard stop                   $5.32</b></pre>
+  <p>Note the last two lines. <strong>The committed total and the hard stop are the same number.</strong> That is the difference between this and a budget ledger: a ledger is a runtime control that permits variable behaviour until the money runs out, so the honest thing it can tell you in advance is &ldquo;at most $8&rdquo;. A compiled plan tells you &ldquo;$5.32&rdquo;, and is right.</p>
+  <ul>
+    <li>Every call must cite a <strong>slot</strong> from the plan. A call with no slot cannot be issued &mdash; there is no code path that builds a request without one.</li>
+    <li><code>max_in</code> is enforced by <code>count_tokens</code> before dispatch. An over-budget prompt is a bug in the assembler, surfaced immediately, never silently truncated.</li>
+    <li>Adaptivity draws from the <strong>probe reserve</strong>: twenty prepaid Haiku slots. An agent wanting a follow-up spends one. When the pool is empty, probes stop. No arithmetic at runtime &mdash; just a counter that only goes down.</li>
+    <li>A run that exhausts its plan <strong>finishes</strong>; it does not stop dead. The plan is ordered so the last slot spent still produces a publishable dossier over whatever survived.</li>
+  </ul>
+</section>
+
+<section class="ph">
+  <div class="phbar">
+    <span class="phnum">04</span><span class="phname">Phase 3 &mdash; Claim</span>
+    <span class="states"><span class="st on">model: running</span><span class="st sealed">network: sealed</span></span>
+  </div>
+  <p>The first phase in which a model exists. It is structurally incapable of anything but reading a snapshot slice passed to it in memory and returning a typed object: no filesystem, no network, no shell, no code execution, no tool that reaches outside the process.</p>
+  <h3>Agents emit claims, not scores</h3>
+  <p>The central departure from a conventional scoring pipeline: <strong>an agent may not return a number representing its opinion.</strong> <code>"technical_score": 78</code> is unfalsifiable &mdash; there is no fact about the world that could show it to be wrong, so nothing downstream can check it. Instead:</p>
+<pre>{
+  "subject":     <span class="c">"NSE_EQ|INE090A01021"</span>,
+  "predicate":   <span class="c">"capital_efficiency_improving"</span>,
+  "statement":   <span class="c">"ROE has expanded from 15.2% to 18.4% across the last eight
+                  quarters while leverage was flat."</span>,
+  "evidence":    [<span class="c">"ev:7f3a91c0"</span>, <span class="c">"ev:22b0c4de"</span>, <span class="c">"ev:0ac71b93"</span>],
+  "confidence":  0.72,
+  "falsifier":   <span class="r">"roe_ttm &lt; 16.0 OR roe_slope_8q &lt;= 0
+                  OR debt_to_equity_delta_8q &gt; 0.15"</span>
+}</pre>
+  <ul>
+    <li><strong>Every claim carries a falsifier</strong> &mdash; a predicate over snapshot columns which, if true, refutes the claim. The agent writes the condition under which it would be wrong.</li>
+    <li><strong>Every claim cites evidence IDs</strong>, and a claim citing an ID absent from the snapshot manifest is rejected at parse time, before adjudication.</li>
+  </ul>
+  <p>A model that cannot state what would refute its claim has not made a claim. It has made an impression, and impressions do not belong in a valuation.</p>
+  <h3>What this buys against prompt injection</h3>
+  <div class="note">
+    <p>News text lives in the snapshot and is read offline. A crafted headline can absolutely persuade an agent to emit a false claim &mdash; no envelope wording prevents that. But the claim then has to survive phase 4, where its falsifier is evaluated against structured data the headline cannot touch. <strong>Injection can produce a claim; it cannot produce a claim that passes a machine check.</strong> And with the network sealed, there is nowhere for it to send anything.</p>
+  </div>
+</section>
+
+<section class="ph">
+  <div class="phbar">
+    <span class="phnum">05</span><span class="phname">Phase 4 &mdash; Adjudicate</span>
+    <span class="states"><span class="st off">model: none</span><span class="st sealed">network: sealed</span></span>
+  </div>
+  <p>Deterministic. For every claim, evaluate its falsifier against the snapshot.</p>
+  <ul>
+    <li>Falsifier fires &rarr; the claim is <strong>discarded</strong>, not down-weighted. A claim whose own stated refutation condition holds is simply false.</li>
+    <li>Falsifier does not fire &rarr; the claim survives with its stated confidence.</li>
+    <li>Falsifier cannot be evaluated &mdash; it references a column that does not exist, or data outside its freshness SLA &rarr; the claim is <strong>discarded</strong> and the run records why. Unevaluable is not the same as true.</li>
+  </ul>
+  <p>Ranking is then a fixed formula over surviving claims, grouped by dimension:</p>
+<pre>score(stock) = Σ   w[dim] · Σ  confidence(c)
+              dim           c ∈ surviving(stock, dim)</pre>
+  <p>with <code>w</code> a versioned constant. <strong>No model computes the ranking.</strong> The model&rsquo;s job is to generate hypotheses; the machine&rsquo;s job is to kill the bad ones and count what is left.</p>
+  <p>This is what makes the output auditable in a way a scoring rubric is not. Ask &ldquo;why is ICICI ranked third?&rdquo; and the answer is a list of surviving claims and the falsifiers that did not fire &mdash; not a number a model felt was about right.</p>
+</section>
+
+<section class="ph">
+  <div class="phbar">
+    <span class="phnum">06</span><span class="phname">Phase 5 &mdash; Veto</span>
+    <span class="states"><span class="st on">model: running</span><span class="st sealed">network: sealed</span></span>
+  </div>
+  <p>A single auditor pass with a deliberately asymmetric power: <strong>it can only refute.</strong></p>
+  <ul>
+    <li>It receives the surviving claims and the snapshot slices they cite &mdash; <strong>not</strong> the original agent&rsquo;s reasoning, so it cannot be anchored by it.</li>
+    <li>Its only legal output is a list of refutations, each carrying a falsifier over the snapshot.</li>
+    <li>It has no way to endorse, approve, or raise a confidence. There is no field for it.</li>
+  </ul>
+  <p>Refutations go back through phase 4 and are adjudicated exactly like claims &mdash; an auditor that asserts something unfalsifiable is ignored on the same rule as everybody else.</p>
+  <div class="pull">
+    <p>The asymmetry is the point. A second model asked <em>&ldquo;does this look right?&rdquo;</em> will mostly say yes, and you will have bought agreement rather than scrutiny. A second model that can <em>only</em> attack, and whose attacks must themselves survive a machine check, is doing work.</p>
+  </div>
+</section>
+
+<section class="ph">
+  <div class="phbar">
+    <span class="phnum">07</span><span class="phname">Phase 6 &mdash; Publish</span>
+    <span class="states"><span class="st off">model: none</span><span class="st sealed">network: sealed</span></span>
+  </div>
+  <p>The dossier is assembled deterministically from surviving claims. There is no generative step here &mdash; so every sentence traces to a claim, every claim traces to evidence IDs, and every evidence ID traces to a row in a hashed snapshot.</p>
+  <h3>The reproducibility triple</h3>
+<pre>snapshot     <b>4c1f8a02…8ae2</b>     what was true, and when
+screen cfg   <b>91b07c…</b>            what you asked for
+plan         <b>3e91b4…</b>            what was spent, on which models</pre>
+  <p>Those three fully determine the output. &ldquo;Show me exactly why you said this&rdquo; is three lookups, not an investigation.</p>
+  <h3>What each recommendation carries</h3>
+  <ul>
+    <li><strong>BUY / WATCH / AVOID</strong>, with the surviving-claim count per dimension</li>
+    <li>The surviving claims in plain prose, each with its evidence and <em>its falsifier still attached</em> &mdash; the reader can see what would make this wrong</li>
+    <li>The claims that were <strong>refuted</strong>, and by what. A thesis that survived three attacks is worth more than one nobody tried to kill, and hiding the attacks throws that information away.</li>
+    <li>The snapshot <code>as_of</code>, prominently. A recommendation is a statement about a moment, and the moment is part of the statement.</li>
+  </ul>
+  <p><strong>Abstention.</strong> If fewer than N stocks accumulate enough surviving claims, the run publishes fewer and says so. There is no mechanism to pad the list, because there is no model at this stage that could write an extra entry.</p>
+</section>
+
+<section class="ph">
+  <div class="phbar"><span class="phnum">08</span><span class="phname">The application</span></div>
+  <p>FastAPI with a thin front end. Left rail, two tabs.</p>
+  <div class="tscroll">
+    <table>
+      <thead><tr><th>Fundamental tab</th><th>Technical tab</th></tr></thead>
+      <tbody>
+        <tr><td>ROE floor &middot; ROIC floor &middot; debt-to-equity ceiling</td><td>RSI band &middot; price against MA20 and MA50</td></tr>
+        <tr><td>Revenue growth &middot; earnings growth &middot; P/E band</td><td>Volume ratio floor &middot; ATR ceiling</td></tr>
+        <tr><td>Market-cap floor &middot; promoter-pledge ceiling</td><td>30-day and 90-day return bands</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Sliders are arguments to the phase-2 filter. They are hashed into the screen config and never reach a prompt &mdash; not as a safety patch, but because phase 2 has no model in it for them to reach.</p>
+  <h3>Three things on screen that exist nowhere else</h3>
+  <ul>
+    <li>The <strong>seal indicator</strong> &mdash; which phase the run is in, whether the network is live, whether a model is running. The invariant from clause 01, rendered as a live status rather than a promise in a document.</li>
+    <li>The <strong>spend plan</strong>, shown before the run starts, with the committed total. You approve a number, not a ceiling.</li>
+    <li>The <strong>claim ledger</strong> &mdash; claims appearing, then being struck through as phase 4 refutes them. Watching claims die is the most informative view of a run.</li>
+  </ul>
+</section>
+
+<section class="ph">
+  <div class="phbar"><span class="phnum">09</span><span class="phname">Build order</span></div>
+  <div class="tscroll">
+    <table>
+      <thead><tr><th>Phase</th><th>Deliverable</th><th>Gate</th></tr></thead>
+      <tbody>
+        <tr><td class="k">P0</td><td>Snapshot format, manifest, evidence IDs, content addressing. <strong>No network, no model.</strong></td><td>A snapshot round-trips; two builds over identical inputs produce identical hashes.</td></tr>
+        <tr><td class="k">P1</td><td>The ETL and the Upstox adapter. Network exists here and nowhere else.</td><td>Seal asserted: after phase 1 the analysis process has no route. A test proves a socket attempt raises.</td></tr>
+        <tr><td class="k">P2</td><td>Derived-indicator engine inside the ETL.</td><td>Indicators reconciled against a known-good reference series.</td></tr>
+        <tr><td class="k">P3</td><td>Screen, screen-config hashing, spend-plan compiler.</td><td>Compiled cost matches actual spend to the cent on a dry run with stub models.</td></tr>
+        <tr><td class="k">P4</td><td>Claim schema, falsifier DSL, the adjudicator.</td><td>Adversarial claim corpus: every hand-written false claim is correctly killed.</td></tr>
+        <tr><td class="k">P5</td><td>Phase 3 agents against the sealed snapshot.</td><td>Committed plan never exceeded; no call without a slot.</td></tr>
+        <tr><td class="k">P6</td><td>The veto auditor.</td><td>Veto demonstrably changes outcomes on a seeded corpus &mdash; if it never refutes anything, it is theatre.</td></tr>
+        <tr><td class="k">P7</td><td>UI: sliders, seal indicator, spend approval, claim ledger.</td><td></td></tr>
+        <tr><td class="k">P8</td><td>Backtest over historical sealed snapshots.</td><td>Lookahead-bias check clean. Does claim-survival ranking beat the raw screen?</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>P0 to P2 have no model in them at all and are useful on their own. That is deliberate: if the agentic layer turns out to add nothing over the deterministic screen, P8 will say so, and you will have lost nothing but the agentic layer.</p>
+</section>
+
+<section class="ph">
+  <div class="phbar"><span class="phnum">10</span><span class="phname">Relationship to the Ring Zero proposal</span></div>
+  <p>You have both documents, so this should be explicit.</p>
+  <p><strong>Where they agree, and why that is not a coincidence.</strong> Read-only Analytics token only; no trading, portfolio, funds or order endpoints; no generic HTTP tool; the model never computes a scored number from raw data; evidence with timestamps and forced abstention on stale or missing data; deterministic code owning control flow; no silently raising a budget. These are not stylistic choices. Any competent design for this brief lands on them, and a second design that diverged for the sake of diverging would be a worse design, not a more original one.</p>
+  <h3>Where they genuinely differ</h3>
+  <div class="tscroll">
+    <table>
+      <thead><tr><th></th><th>Ring Zero</th><th>Sealed Window</th></tr></thead>
+      <tbody>
+        <tr><td class="k">Governing idea</td><td>Confine the agent while it reaches out</td><td>Never let the agent reach out</td></tr>
+        <tr><td class="k">Enforcement</td><td>Reference monitor: method pin, path allowlist, egress proxy</td><td>Temporal separation: no network in the analysis process</td></tr>
+        <tr><td class="k">Agent output</td><td>Scores and narrative, schema-validated</td><td>Typed claims with machine-checkable falsifiers</td></tr>
+        <tr><td class="k">Ranking</td><td>Weighted composite of model-assigned scores</td><td>Arithmetic over claims that survived adjudication</td></tr>
+        <tr><td class="k">Cost control</td><td>Runtime ledger, reserve-and-settle against a ceiling</td><td>Plan compiled and committed before the first call</td></tr>
+        <tr><td class="k">Second opinion</td><td>None</td><td>Auditor with veto-only power</td></tr>
+        <tr><td class="k">Intraday</td><td>Supported</td><td>Requires re-sealing &mdash; the main weakness</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>They are not variants of each other. Ring Zero is right if you need live reactivity and are willing to maintain a reference monitor. This one is right if you would rather have reproducibility and a much smaller thing to trust, and can live with a snapshot cadence.</p>
+</section>
+
+<section class="ph">
+  <div class="phbar"><span class="phnum">11</span><span class="phname">Open decisions</span></div>
+
+  <div class="dec">
+    <div class="dn">01</div>
+    <div>
+      <p class="dq">Snapshot cadence &mdash; the central tradeoff</p>
+      <p class="db">Nightly seal after close is the natural cadence for a fundamentals-led screener, and makes everything above cheap. Intraday reactivity means re-sealing on demand, which turns the ETL into a latency-critical service and weakens the one-acquisition-window story. If intraday is a hard requirement, say so now &mdash; it changes the architecture, not a parameter.</p>
+    </div>
+  </div>
+
+  <div class="dec">
+    <div class="dn">02</div>
+    <div>
+      <p class="dq">How expressive should falsifiers be?</p>
+      <p class="db">A small restricted DSL over snapshot columns &mdash; comparisons, boolean connectives, a fixed function set &mdash; is auditable and safe to evaluate. Restricted Python is more expressive and a much larger thing to trust. Start with the DSL and widen it only when a real claim cannot be expressed.</p>
+      <span class="rec">recommend: DSL</span>
+    </div>
+  </div>
+
+  <div class="dec">
+    <div class="dn">03</div>
+    <div>
+      <p class="dq">Should the veto auditor be a different model family?</p>
+      <p class="db">Using Claude for both claim and veto means correlated blind spots. A genuinely independent auditor means a second provider &mdash; a new dependency, a second credential, a second set of governance questions. Defensible either way; I would ship with Sonnet as the auditor and revisit if P6&rsquo;s gate shows it rarely refutes.</p>
+    </div>
+  </div>
+
+  <div class="dec">
+    <div class="dn">04</div>
+    <div>
+      <p class="dq">Snapshot retention</p>
+      <p class="db">Reproducibility is only real for as long as the snapshots exist. Two thousand names with 500 sessions of candles, twelve periods of fundamentals and a 30-day news window is not large, but daily seals accumulate. How long do you want to be able to reproduce a recommendation &mdash; a quarter, a year, indefinitely?</p>
+    </div>
+  </div>
+
+  <div class="dec">
+    <div class="dn">05</div>
+    <div>
+      <p class="dq">Carried forward</p>
+      <p class="db">Scope is this folder only; Anthropic confirmed; Python assumed. Upstox fundamentals coverage for mid- and small-caps still needs checking before P2 &mdash; thin coverage would mean a second source in the ETL, and your approval before it is wired.</p>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div>Sealed Window Stock Evaluator</div>
+  <div>Architecture proposal &middot; v1 &middot; 13 Sep 2026</div>
+  <div>Research and recommendation only &mdash; no order placement</div>
+</footer>
+
+</div>

@@ -1,0 +1,7 @@
+{
+  "rsi_min": 30,
+  "rsi_max": 80,
+  "price_above_sma50": true,
+  "atr_pct_max": 5,
+  "max_candidates": 20
+}

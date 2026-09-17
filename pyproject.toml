@@ -1,0 +1,19 @@
+[project]
+name = "sealed-window"
+version = "0.1.0"
+description = "Sealed Window NSE stock evaluator - research and recommendation only, no order placement."
+requires-python = ">=3.12"
+dependencies = [
+    "anthropic>=1.5,<2",
+    "pydantic>=2.13,<3",
+    "httpx>=0.28,<1",
+    "fastapi>=0.137",
+    "uvicorn>=0.49",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]

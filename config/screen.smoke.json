@@ -1,0 +1,10 @@
+{
+  "roe_min_pct": 12,
+  "roce_min_pct": 12,
+  "revenue_growth_min_pct": 0,
+  "pe_max": 80,
+  "rsi_min": 30,
+  "rsi_max": 80,
+  "atr_pct_max": 5,
+  "max_candidates": 2
+}

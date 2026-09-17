@@ -1,0 +1,52 @@
+# Universe for `python -m sealed_window acquire --source upstox`.
+# One NSE trading symbol per line. Index constituents change over time: symbols that do not
+# resolve to an NSE_EQ equity in the Upstox instrument master are recorded as acquisition
+# notes in the snapshot manifest and skipped, never guessed.
+RELIANCE
+TCS
+HDFCBANK
+ICICIBANK
+INFY
+BHARTIARTL
+ITC
+SBIN
+LT
+HINDUNILVR
+KOTAKBANK
+AXISBANK
+BAJFINANCE
+ASIANPAINT
+MARUTI
+SUNPHARMA
+TITAN
+ULTRACEMCO
+NESTLEIND
+WIPRO
+HCLTECH
+POWERGRID
+NTPC
+TATASTEEL
+M&M
+ADANIPORTS
+BAJAJFINSV
+JSWSTEEL
+TECHM
+ONGC
+COALINDIA
+GRASIM
+CIPLA
+DRREDDY
+EICHERMOT
+HEROMOTOCO
+BRITANNIA
+APOLLOHOSP
+TATACONSUM
+BAJAJ-AUTO
+HINDALCO
+INDUSINDBK
+SBILIFE
+HDFCLIFE
+SHRIRAMFIN
+TRENT
+BEL
+ADANIENT
