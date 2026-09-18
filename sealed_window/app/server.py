@@ -8,8 +8,15 @@ GET  /api/snapshots            sealed snapshots available to screen
 GET  /api/screen/schema        slider and toggle definitions for the two tabs
 POST /api/plan                 run the screen and compile the spend plan (no model calls)
 POST /api/runs                 start a run; requires the approved plan hash to match a fresh compile
+GET  /api/runs                 completed runs found on disk, newest first
 GET  /api/runs/{run_id}        live run state: phase, seal, spend, claim ledger, dossier when done
 GET  /api/runs/{run_id}/dossier.md  the rendered dossier
+
+Runs started from the command line are readable here too. The orchestrator writes the same
+artefacts whichever way a run is launched, so the two run endpoints fall back to reading
+``dossier.json`` from disk when a run is not in this process's memory. Such a payload is marked
+``historical`` and carries no seal: the seal describes *this* process now, and reporting a live
+one beside a finished run would imply the run were still happening.
 
 Governance properties of the app itself:
 
@@ -25,6 +32,7 @@ Governance properties of the app itself:
 
 from __future__ import annotations
 
+import json
 import threading
 from dataclasses import asdict
 from pathlib import Path
@@ -205,21 +213,94 @@ def create_app(
         threading.Thread(target=target, name=f"run-{state.run_id}", daemon=True).start()
         return {"run_id": state.run_id, "plan_hash": prepared.plan.plan_hash}
 
+    @app.get("/api/runs")
+    def list_runs() -> list[dict[str, Any]]:
+        """Completed runs on disk, newest first, with enough detail to choose one."""
+        out = []
+        for path in sorted(runs_root.glob("*/dossier.json"), key=lambda p: p.stat().st_mtime, reverse=True):
+            try:
+                header = json.loads(path.read_text(encoding="utf-8"))["header"]
+            except (OSError, ValueError, KeyError):
+                continue  # a half-written or foreign directory is skipped, not fatal
+            out.append({
+                "run_id": path.parent.name,
+                "as_of": header.get("as_of"),
+                "model_client": header.get("model_client"),
+                "picks": header.get("funnel", {}).get("published_picks"),
+                "spent": header.get("spend", {}).get("spent"),
+            })
+        return out
+
     @app.get("/api/runs/{run_id}")
     def run_status(run_id: str) -> dict[str, Any]:
-        """Live state of a run: phase, seal, spend, funnel, claim ledger and dossier when done."""
+        """Live state of a run, or a finished run reconstructed from disk."""
         state = runs.get(run_id)
-        if state is None:
-            raise HTTPException(404, "unknown run")
-        return state.to_dict()
+        if state is not None:
+            return state.to_dict()
+        return _run_from_disk(runs_root, run_id)
 
     @app.get("/api/runs/{run_id}/dossier.md", response_class=PlainTextResponse)
     def run_dossier(run_id: str) -> str:
-        """The rendered Markdown dossier of a finished run."""
+        """The rendered Markdown dossier of a finished run, from memory or from disk."""
         state = runs.get(run_id)
         dossier = state.to_dict().get("dossier") if state else None
         if dossier is None:
-            raise HTTPException(404, "no dossier for this run")
+            dossier = _run_from_disk(runs_root, run_id)["dossier"]
         return render_markdown(dossier)
 
     return app
+
+
+def _ledger_from_dossier(dossier: dict[str, Any]) -> list[dict[str, Any]]:
+    """Rebuild the claim-ledger rows from a stored dossier.
+
+    The live ledger comes from :func:`claim_ledger_view`, which needs the snapshot to resolve
+    trading symbols. A stored dossier already carries the symbol on every entry, so a finished run
+    renders in the same table without loading a snapshot that can run to a hundred megabytes.
+    """
+    rows = []
+    for entry in list(dossier.get("picks", [])) + list(dossier.get("avoid", [])):
+        symbol = entry.get("trading_symbol")
+        for claim in entry.get("surviving_claims", []):
+            rows.append({"claim_id": claim.get("claim_id"), "symbol": symbol,
+                         "dimension": claim.get("dimension"), "direction": claim.get("direction"),
+                         "confidence": claim.get("confidence"), "statement": claim.get("statement"),
+                         "falsifier": claim.get("falsifier"), "verdict": "survived", "reason": ""})
+        for claim in entry.get("refuted_or_vetoed_claims", []):
+            rows.append({"claim_id": claim.get("claim_id"), "symbol": symbol,
+                         "dimension": claim.get("dimension"), "direction": claim.get("direction"),
+                         "confidence": claim.get("confidence"), "statement": claim.get("statement"),
+                         "falsifier": claim.get("falsifier"), "verdict": claim.get("verdict", "refuted"),
+                         "reason": claim.get("reason", "")})
+    return rows
+
+
+def _run_from_disk(runs_root: Path, run_id: str) -> dict[str, Any]:
+    """Reconstruct a finished run's UI payload from its stored dossier.
+
+    Shaped like :meth:`RunState.to_dict` so the front end renders a past run through exactly the
+    same code as a live one. Two deliberate differences: ``historical`` is true, and ``seal`` is
+    ``None`` rather than the current process seal -- a finished run has no live seal, and showing
+    one would suggest it were still in flight.
+    """
+    if not run_id.replace("-", "").isalnum():
+        raise HTTPException(400, "malformed run id")  # never let a path segment escape runs_root
+    path = runs_root / run_id / "dossier.json"
+    try:
+        dossier = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise HTTPException(404, f"no stored dossier for run {run_id}") from exc
+    header = dossier.get("header", {})
+    return {
+        "run_id": run_id,
+        "status": "done",
+        "phase": "done",
+        "historical": True,
+        "error": None,
+        "funnel": header.get("funnel", {}),
+        "plan_hash": header.get("reproducibility", {}).get("plan"),
+        "spend": header.get("spend"),
+        "claims": _ledger_from_dossier(dossier),
+        "dossier": dossier,
+        "seal": None,
+    }

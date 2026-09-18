@@ -1,4 +1,5 @@
-"""Web app tests: governance endpoint, strict request validation, and approve-a-number semantics."""
+"""Web app tests: governance endpoint, strict request validation, approve-a-number semantics, and
+reading a finished run back from disk so a command-line run can be viewed without paying twice."""
 
 from __future__ import annotations
 
@@ -10,6 +11,8 @@ from fastapi.testclient import TestClient
 from sealed_window.agents.offline_model import OfflineHeuristicModel
 from sealed_window.app.server import create_app
 from sealed_window.governance.seal import SEAL
+from sealed_window.orchestrator import Orchestrator, RunRequest, RunState, prepare_run
+from sealed_window.screen.config import ScreenConfig
 
 
 @pytest.fixture
@@ -19,6 +22,47 @@ def app_client(sealed_snapshot, tmp_path):
     root, root_hash = sealed_snapshot
     app = create_app(snapshot_root=root, runs_root=tmp_path, client_factory=lambda mode, local_model=None: OfflineHeuristicModel())
     return TestClient(app), root_hash
+
+
+def test_a_finished_run_is_readable_by_a_server_that_never_ran_it(sealed_snapshot, tmp_path):
+    """A run written by the orchestrator opens in a fresh server, from disk alone.
+
+    The CLI and the dashboard write the same artefacts, so a run started from the shell has to be
+    viewable here. Without this the only way to see a result in the UI is to run it again, which
+    means paying for the same answer twice.
+    """
+    SEAL.seal()
+    root, root_hash = sealed_snapshot
+    runs_root = tmp_path / "runs"
+    config = ScreenConfig()
+    prepared = prepare_run(root, root_hash, config)
+    state = RunState()
+    Orchestrator(snapshot_root=root, runs_root=runs_root,
+                 client_factory=lambda mode, local_model=None: OfflineHeuristicModel()).run(
+        RunRequest(snapshot_hash=root_hash, screen_config=config,
+                   approved_plan_hash=prepared.plan.plan_hash), state)
+
+    # A brand-new app: this run exists nowhere in its memory, only on disk.
+    client = TestClient(create_app(snapshot_root=root, runs_root=runs_root,
+                                   client_factory=lambda mode, local_model=None: OfflineHeuristicModel()))
+
+    assert [r["run_id"] for r in client.get("/api/runs").json()] == [state.run_id]
+
+    loaded = client.get(f"/api/runs/{state.run_id}").json()
+    assert loaded["status"] == "done" and loaded["historical"] is True
+    assert loaded["seal"] is None, "a finished run has no live seal; inventing one would imply it is running"
+    assert loaded["dossier"]["header"]["funnel"]["universe"] > 0
+    assert loaded["claims"], "the claim ledger rebuilds from the stored dossier, without loading a snapshot"
+    assert {"symbol", "dimension", "statement", "falsifier", "verdict"} <= set(loaded["claims"][0])
+    assert "# Sealed Window dossier" in client.get(f"/api/runs/{state.run_id}/dossier.md").text
+
+
+def test_unknown_and_malformed_run_ids_fail_closed(app_client):
+    """A run id that names nothing is a 404, and one that tries to escape runs_root never resolves."""
+    client, _ = app_client
+    assert client.get("/api/runs/20260101T000000Z-abcdef").status_code == 404
+    for hostile in ("..", "..%2F..%2Fetc", "a/b"):
+        assert client.get(f"/api/runs/{hostile}").status_code in (400, 404), hostile
 
 
 def test_index_and_governance(app_client):

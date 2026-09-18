@@ -68,6 +68,9 @@
     <button class="primary" id="compile">Compile spend plan</button>
     <button class="primary" id="approve" disabled>Approve and run</button>
     <p class="muted" id="hint">Sliders feed the deterministic screen only. They never reach a prompt.</p>
+    <h2 style="margin-top:14px">Past runs</h2>
+    <select id="past_runs"><option value="">Load a completed run…</option></select>
+    <p class="muted">Runs started from the command line are stored on disk and open here.</p>
   </aside>
   <main>
     <section><h2>Spend plan</h2><div id="plan" class="muted">Compile a plan to see the committed total.</div></section>
@@ -104,6 +107,9 @@ function renderSeal(seal, phase) {
   // Seal indicator: the invariant rendered as live status.
   const box = $("seal"); box.replaceChildren();
   box.append(el("span", "phase: " + (phase || "idle"), "badge"));
+  // A run loaded from disk carries no seal: the seal describes this process now, and showing one
+  // beside a finished run would imply it were still in flight. Say so instead of inventing a state.
+  if (!seal) { box.append(el("span", "seal: not live — stored run", "badge sealed")); return; }
   box.append(el("span", "upstox network: " + (seal.network_live ? "LIVE" : "sealed"), "badge " + (seal.network_live ? "live" : "sealed")));
   box.append(el("span", "model: " + (seal.model_running ? "running" : "none"), "badge " + (seal.model_running ? "live" : "sealed")));
   box.append(el("span", "mode: " + seal.mode, "badge"));
@@ -188,6 +194,23 @@ async function startRun() {
   } catch (e) { $("run").textContent = "Run refused: " + e.message; }
 }
 
+async function loadPastRun(runId) {
+  // Open a finished run from disk. Shown as what it is -- a stored result, not a live run.
+  clearInterval(pollTimer);
+  if (!runId) return;
+  try {
+    const s = await api("/api/runs/" + runId);
+    renderSeal(s.seal, s.phase);
+    const box = $("run"); box.replaceChildren();
+    box.append(el("p", `run ${s.run_id} · loaded from disk · status ${s.status}`));
+    box.append(el("p", `model: ${s.dossier.header.model_client}`));
+    if (s.spend) box.append(el("p", `spend ${s.spend.spent} of ${s.spend.committed} committed`));
+    for (const note of s.dossier.header.notes || []) box.append(el("p", "note: " + note, "muted"));
+    renderLedger(s.claims || []);
+    renderDossier(s.dossier);
+  } catch (e) { $("run").textContent = "Could not load run: " + e.message; }
+}
+
 function poll(runId) {
   // Poll run state every second until it finishes.
   clearInterval(pollTimer);
@@ -262,6 +285,13 @@ async function init() {
   renderSliders();
   $("compile").onclick = compilePlan; $("approve").onclick = startRun;
   $("model_mode").onchange = updateApprove;
+  try {
+    for (const r of await api("/api/runs")) {
+      const o = el("option", `${r.as_of} · ${r.picks} pick(s) · ${r.spent} · ${r.model_client} · ${r.run_id.slice(0, 16)}`);
+      o.value = r.run_id; $("past_runs").append(o);
+    }
+  } catch (e) { /* listing is optional; the dashboard still runs without it */ }
+  $("past_runs").onchange = (e) => loadPastRun(e.target.value);
 }
 init();
 </script>
