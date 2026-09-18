@@ -254,15 +254,25 @@ def compile_plan(
     candidate_count: int,
     specs: tuple[SlotClassSpec, ...] = DEFAULT_SLOT_SPECS,
     veto_batch_size: int = VETO_BATCH_SIZE,
+    veto_candidate_count: int | None = None,
     ceiling_microusd: int | None = None,
 ) -> SpendPlan:
     """Compile the spend plan for a screened run.
+
+    ``veto_candidate_count`` is how many candidates the auditor will read, which need not be all of
+    them: analysts are cheap and the veto is not, so a run may claim across a wide field and audit
+    only the front of it. Defaults to every candidate. The committed total must describe what the
+    run can actually spend, so a narrower veto has to lower the number the operator approves rather
+    than leaving slots reserved for calls that will never be made.
 
     ``ceiling_microusd`` is an operator limit checked at compile time: a plan above it is
     refused (narrow the screen), never silently trimmed at runtime.
     """
     if candidate_count < 0:
         raise ValueError("candidate_count must be >= 0")
+    vetoed = candidate_count if veto_candidate_count is None else min(veto_candidate_count, candidate_count)
+    if vetoed < 0:
+        raise ValueError("veto_candidate_count must be >= 0")
     rows = []
     for spec in specs:
         price_of(spec.model)  # refuse to compile a plan whose cost cannot be stated
@@ -271,7 +281,7 @@ def compile_plan(
         elif spec.per == "probe":
             calls = candidate_count * PROBES_PER_CANDIDATE
         else:
-            calls = math.ceil(candidate_count / veto_batch_size)
+            calls = math.ceil(vetoed / veto_batch_size)
         rows.append(
             PlanRow(
                 slot_class=spec.slot_class,

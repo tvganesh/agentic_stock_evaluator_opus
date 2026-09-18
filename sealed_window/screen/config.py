@@ -70,6 +70,19 @@ class ScreenConfig(BaseModel):
         description="How survivors are ordered before truncation: composite percentile across "
                     "quality, value, growth, trend and risk, or the older single-factor ordering",
     )
+    veto_top_n: int | None = Field(
+        None, ge=1, le=150,
+        description="Cap on candidates whose claims reach the veto (None: audit every candidate)",
+    )
+    """How far down the shortlist the auditor reads.
+
+    Analysts are cheap and the veto is not -- measured on 18 Sep 2026, analysts cost $0.036 a
+    candidate against the veto's $0.049 -- so the cheap stage can cover a wide field while the
+    expensive one covers only the front of it. That lets the models, rather than a deterministic
+    sort, decide which companies deserve scrutiny.
+
+    The cost is real and is recorded in the dossier: claims on candidates below the cut are
+    adjudicated but never attacked by an auditor."""
 
     @model_validator(mode="after")
     def _bands_are_ordered(self) -> "ScreenConfig":

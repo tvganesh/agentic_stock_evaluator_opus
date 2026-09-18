@@ -33,7 +33,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
-from .adjudicate.adjudicator import Adjudicator
+from .adjudicate.adjudicator import Adjudicator, score_candidates
 from .agents.claim_agents import CLAIM_DIMENSIONS, run_claim_agent
 from .agents.veto import batch_subjects, run_veto_batch
 from .claims.schema import Adjudication, Claim, Refutation, Verdict
@@ -123,6 +123,7 @@ def prepare_run(
         screen_config_hash=screen.config_hash,
         candidate_count=len(screen.candidates),
         specs=specs_for_mode(model_mode, local_model),
+        veto_candidate_count=config.veto_top_n,
         ceiling_microusd=ceiling_microusd,
     )
     return PreparedRun(snapshot, screen, plan)
@@ -257,13 +258,28 @@ class Orchestrator:
             state.set(claims=claim_ledger_view(snapshot, claims, verdicts))
             surviving = {c.claim_id: c for c in claims if verdicts[c.claim_id].verdict is Verdict.SURVIVED}
 
+            # The auditor may read only the front of the shortlist. Analysts are cheap and the veto
+            # is not, so a run can claim across a wide field and scrutinise the part of it that the
+            # evidence -- not a deterministic sort -- put at the top.
+            audited = surviving
+            if request.screen_config.veto_top_n is not None:
+                ranked = score_candidates(screen.candidates, claims, verdicts)
+                front = {s.instrument_key for s in ranked[: request.screen_config.veto_top_n]}
+                audited = {cid: c for cid, c in surviving.items() if c.subject in front}
+                if len(front) < len(screen.candidates):
+                    notes.append(
+                        f"veto covered the top {len(front)} of {len(screen.candidates)} candidates by score; "
+                        f"{len(surviving) - len(audited)} surviving claim(s) below the cut were adjudicated "
+                        "but never attacked by an auditor"
+                    )
+
             refutations: list[Refutation] = []
-            if surviving and ledger.remaining(SlotClass.VETO) > 0:
+            if audited and ledger.remaining(SlotClass.VETO) > 0:
                 phases.advance(RunPhase.VETO)
-                refutations = self._veto_phase(gateway, ledger, snapshot, screen, surviving, audit, notes)
+                refutations = self._veto_phase(gateway, ledger, snapshot, screen, audited, audit, notes)
                 phases.advance(RunPhase.ADJUDICATE_VETO)
                 ref_verdicts, vetoed = adjudicator.adjudicate_refutations(
-                    refutations, surviving, phase=RunPhase.ADJUDICATE_VETO.value)
+                    refutations, audited, phase=RunPhase.ADJUDICATE_VETO.value)
                 verdicts.update(ref_verdicts)
                 verdicts.update(vetoed)
                 state.set(claims=claim_ledger_view(snapshot, claims, verdicts))

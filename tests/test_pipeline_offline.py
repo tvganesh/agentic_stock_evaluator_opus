@@ -18,6 +18,7 @@ from sealed_window.governance.audit import AuditLog
 from sealed_window.governance.errors import PlanNotApproved
 from sealed_window.governance.llm_gateway import ModelRequest
 from sealed_window.governance.seal import SEAL
+from sealed_window.governance.spend import SlotClass
 from sealed_window.orchestrator import Orchestrator, RunRequest, RunState, prepare_run
 from sealed_window.screen.config import ScreenConfig
 
@@ -101,6 +102,34 @@ def test_injection_claim_is_discarded(run):
         assert ledger["verdicts"][claim["claim_id"]]["verdict"] == "vacuous"
     published = {c["claim_id"] for p in dossier["picks"] + dossier["avoid"] for c in p["surviving_claims"]}
     assert not published & {c["claim_id"] for c in injected}
+
+
+def test_veto_top_n_audits_only_the_front_of_the_shortlist(sealed_snapshot, tmp_path):
+    """Claims are made across the whole field; only the top scorers are audited.
+
+    Analysts are cheap and the veto is not, so a run can claim widely and scrutinise the part the
+    evidence put at the top. The cost is that claims below the cut are adjudicated but never
+    attacked, which the dossier has to say out loud rather than leave a reader to assume.
+    """
+    SEAL.seal()
+    root, root_hash = sealed_snapshot
+    config = ScreenConfig(max_candidates=6, veto_top_n=2)
+    prepared = prepare_run(root, root_hash, config)
+
+    # The committed total must describe what the run can spend: a narrower veto commits fewer calls.
+    wide = prepare_run(root, root_hash, ScreenConfig(max_candidates=6))
+    assert prepared.plan.row(SlotClass.VETO).calls < wide.plan.row(SlotClass.VETO).calls
+    assert prepared.plan.committed_total_microusd < wide.plan.committed_total_microusd
+
+    state = RunState()
+    dossier = Orchestrator(snapshot_root=root, runs_root=tmp_path / "runs",
+                           client_factory=lambda mode, local_model=None: OfflineHeuristicModel()).run(
+        RunRequest(snapshot_hash=root_hash, screen_config=config,
+                   approved_plan_hash=prepared.plan.plan_hash), state)
+
+    note = next((n for n in dossier["header"]["notes"] if "veto covered the top" in n), None)
+    assert note is not None, "a partial audit must be recorded, not silent"
+    assert "never attacked by an auditor" in note
 
 
 def test_veto_changes_outcomes(run):

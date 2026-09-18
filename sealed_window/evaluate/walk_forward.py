@@ -44,7 +44,7 @@ from ..snapshot.store import SealedSnapshot
 BACKTEST_VERSION = "walk-forward-v1"
 PRICE_ONLY_DIMENSIONS = frozenset({Dimension.TECHNICAL})
 
-NON_FILTER_FIELDS = frozenset({"max_candidates", "ranking"})
+NON_FILTER_FIELDS = frozenset({"max_candidates", "ranking", "veto_top_n"})
 """Screen-config fields that shape a run without filtering on a column.
 
 Listed explicitly rather than inferred. ``_config_field_column`` returns ``None`` for anything it
