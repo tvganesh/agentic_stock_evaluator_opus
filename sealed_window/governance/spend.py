@@ -120,8 +120,20 @@ Limits calibrated on the first live Claude run (15 Sep 2026): claim calls used 7
 tokens against 3,000-4,000; the veto used 3,996 of 8,000 auditing just 2 instruments, so its
 limit was doubled for full batches of 4, where truncation would silently lose every refutation."""
 
-VETO_BATCH_SIZE = 4
-"""Candidates whose surviving claims are audited together in one veto call (sized to fit ``max_in``)."""
+VETO_BATCH_SIZE = 3
+"""Candidates whose surviving claims are audited together in one veto call.
+
+Sized by ``max_out``, not ``max_in``. The auditor writes a refutation per claim it attacks, so a
+batch that fits the prompt comfortably can still run out of room to answer -- and a veto truncated
+mid-JSON yields nothing at all, losing every refutation for those candidates after the call has
+already been paid for.
+
+Measured on the run of 18 Sep 2026 (15 candidates, Sonnet, 16,000 output tokens per veto slot):
+batches of 46 and 38 claims finished at 14,948 and 9,324 output tokens, while batches of 50 and 43
+hit the ceiling and were discarded -- two of four batches lost, 93 claims unaudited. At roughly 12
+surviving claims per candidate, three candidates keeps a batch near 35 claims and well inside the
+limit. Lowering the batch costs one extra veto call per run; raising ``max_out`` instead would
+raise the committed total of every run, including the ones that never needed the room."""
 
 
 MODEL_MODES = ("anthropic", "local", "offline")

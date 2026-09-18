@@ -71,7 +71,8 @@ def test_veto_output_limit_and_commitment():
     plan = compile_plan(snapshot_hash="a" * 64, screen_config_hash="b" * 64, candidate_count=20)
     analysts = (24_000 * 2 + 4_000 * 10) + (20_000 * 2 + 3_000 * 10) + (20_000 * 1 + 1_500 * 5)
     probes = PROBES_PER_CANDIDATE * (12_000 * 1 + 1_500 * 5)
-    assert plan.committed_total_microusd == 20 * (analysts + probes) + 5 * (40_000 * 2 + 16_000 * 10)
+    # ceil(20 / VETO_BATCH_SIZE) = 7 veto batches
+    assert plan.committed_total_microusd == 20 * (analysts + probes) + 7 * (40_000 * 2 + 16_000 * 10)
 
 
 @pytest.fixture

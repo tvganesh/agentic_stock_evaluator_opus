@@ -60,7 +60,7 @@ from .governance.spend import (
 from .publish.dossier import build_dossier, render_markdown
 from .screen.config import ScreenConfig
 from .screen.screen import ScreenResult, run_screen
-from .snapshot.columns import DERIVED_COLUMNS_VERSION
+from .snapshot.columns import DERIVED_COLUMNS_VERSION, Dimension
 from .snapshot.store import SealedSnapshot
 
 def make_model_client(mode: str, local_model: str = DEFAULT_LOCAL_MODEL) -> ModelClient:
@@ -306,7 +306,15 @@ class Orchestrator:
         notes: list[str],
     ) -> list[Claim]:
         """Run every (candidate, dimension) claim agent with bounded concurrency; results in stable order."""
-        tasks = [(key, dimension) for key in screen.candidates for dimension in CLAIM_DIMENSIONS]
+        # A company with no headlines gives a news analyst nothing to weigh. Asking anyway spends a slot
+        # on claims that cite price evidence and are rejected for it -- 8 of 9 in the run of 18 Sep 2026 --
+        # plus the occasional "no recent news" claim, which scores the absence of evidence as if it were
+        # evidence. Skipping is honest and free: the unused slot is simply never redeemed.
+        tasks = [(key, dimension) for key in screen.candidates for dimension in CLAIM_DIMENSIONS
+                 if dimension is not Dimension.NEWS or snapshot.news_for(key)]
+        silent = sum(1 for key in screen.candidates if not snapshot.news_for(key))
+        if silent:
+            notes.append(f"news agent skipped for {silent} candidate(s) with no headlines in the window")
 
         def work(task: tuple[str, Any]) -> list[Claim]:
             """Run one claim agent; slot exhaustion or an oversize prompt skips it (audited)."""

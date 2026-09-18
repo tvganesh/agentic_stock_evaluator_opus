@@ -76,8 +76,8 @@ def _gateway(client: FakeClient, candidates: int = 2, in_model_phase: bool = Tru
 def test_committed_total_is_the_hard_stop():
     """Committed equals the sum of per-call bounds times calls, and equals the hard stop."""
     plan = _plan(10)
-    # three analysts per candidate, two prepaid probes per candidate, one veto per four candidates
-    assert [r.calls for r in plan.rows] == [10, 10, 10, 20, 3]
+    # three analysts per candidate, two prepaid probes per candidate, one veto per three candidates
+    assert [r.calls for r in plan.rows] == [10, 10, 10, 20, 4]
     assert plan.committed_total_microusd == sum(r.calls * r.per_call_bound_microusd for r in plan.rows)
     assert plan.hard_stop_microusd == plan.committed_total_microusd
     assert call_bound_microusd("claude-sonnet-5", 11_000, 4_000) == 11_000 * 2 + 4_000 * 10
