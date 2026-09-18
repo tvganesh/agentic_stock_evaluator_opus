@@ -114,12 +114,47 @@ def validate_claim(claim: Claim, snapshot: SealedSnapshot) -> ValidationResult:
     missing = unsupported_figures(claim.statement, records)
     if missing:
         return ValidationResult(False, f"statement figure {missing[0]} does not appear in cited evidence")
-    # The justification is published beside the claim, so it is held to the same standard: a model
-    # explaining itself must not reach for a figure the evidence does not contain.
-    missing = unsupported_figures(claim.justification, records)
-    if missing:
-        return ValidationResult(False, f"justification figure {missing[0]} does not appear in cited evidence")
+    # The justification is NOT checked here. An unsupported figure in the argument withholds the
+    # argument at bind time (see :func:`sanitised_justification`); it does not kill the claim.
     return _check_falsifier(claim.falsifier, claim.dimension)
+
+
+WITHHELD_JUSTIFICATION = (
+    "(Justification withheld: it cited a figure that does not appear in the evidence this claim "
+    "relies on. The claim itself is unaffected -- it stands or falls on its falsifier.)"
+)
+"""Replaces an argument that reached for a figure the cited evidence does not contain.
+
+Deliberately does not name the figure. This notice is published in the dossier beside the claim,
+and the rule the whole check exists to enforce is that published text traces to evidence -- so
+printing the unevidenced number here, even labelled as unsupported, would commit the fault it is
+reporting. The figure is not lost: the audit log records which one triggered the withholding, which
+is where unverified content belongs."""
+
+
+def sanitised_justification(
+    justification: str, snapshot: SealedSnapshot, evidence: Iterable[str], subject: str
+) -> str:
+    """The claim's justification, or a withholding notice if it quotes an unsupported figure.
+
+    Withholding rather than rejecting, because the two faults are not the same size. A figure in the
+    *statement* is the claim asserting something the evidence does not support, and that is fatal. A
+    figure in the *justification* is a fault in the commentary around a claim whose statement,
+    falsifier and evidence have all passed; killing it throws away a sound argument over a footnote.
+
+    That distinction is not theoretical. In the run of 18 Sep 2026 the fatal version rejected 22 of
+    157 claims and dropped survival from 92% to 77%. Among them were two negative fundamental claims
+    -- "P/B of 8.82x versus sector" and "P/B of 19.8x versus the sector average of 8.04x" -- both
+    correct, and both the only thing standing between their companies and a BUY rating, since the BUY
+    rule bars any surviving negative fundamental claim above 0.6 confidence. Losing them manufactured
+    two BUYs that the evidence did not support.
+
+    The unsupported figure never reaches print: the argument is replaced, not merely flagged.
+    """
+    error, records = _check_evidence(snapshot, evidence, subject)
+    if error:
+        return justification  # the evidence itself is unusable; validate_claim rejects the claim
+    return WITHHELD_JUSTIFICATION if unsupported_figures(justification, records) else justification
 
 
 def validate_refutation(

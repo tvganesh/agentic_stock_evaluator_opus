@@ -19,6 +19,7 @@ from sealed_window.claims.schema import (
     RefutationDraft,
     Verdict,
 )
+from sealed_window.claims.validator import sanitised_justification
 from sealed_window.governance.audit import AuditLog
 from sealed_window.snapshot.columns import Dimension
 
@@ -66,12 +67,6 @@ def test_adversarial_corpus_every_false_claim_is_killed(snapshot, pair):
         "another stock's evidence": (_claim(weak, FUND, "roe_pct < 1", evidence=[ev_strong]), Verdict.REJECTED),
         "invented figure": (_claim(weak, FUND, "roe_pct < 1", evidence=[ev_weak],
                                    statement="ROE is a remarkable 9999.99% this year."), Verdict.REJECTED),
-        # The justification is published beside the claim, so a model may not reach for a figure the
-        # evidence lacks while explaining itself. This is what makes it evidence-bound rather than prose.
-        "invented figure in the justification": (
-            _claim(weak, FUND, "roe_pct < 1", evidence=[ev_weak],
-                   justification="Capital efficiency is improving because return on equity reached 8888.88% "
-                                 "this year, which is far above the sector."), Verdict.REJECTED),
         "wrong-dimension falsifier": (_claim(weak, FUND, "rsi_14 > 99", evidence=[ev_weak]), Verdict.REJECTED),
         "no own-dimension evidence": (_claim(weak, FUND, "roe_pct < 1", evidence=[ev_weak_tech]), Verdict.REJECTED),
         "unparseable falsifier": (_claim(weak, FUND, "roe_pct <<< 3", evidence=[ev_weak]), Verdict.REJECTED),
@@ -122,6 +117,31 @@ def test_refutations_are_held_to_the_same_standard(snapshot, pair):
     assert ref_verdicts[spaced.refutation_id].verdict is Verdict.REJECTED, "compared as parsed trees, not text"
     assert ref_verdicts[sound.refutation_id].verdict is Verdict.SURVIVED
     assert vetoed[target.claim_id].verdict is Verdict.VETOED and sound.refutation_id in vetoed[target.claim_id].reason
+
+
+def test_unsupported_figure_withholds_the_argument_but_keeps_the_claim(snapshot, pair):
+    """A stray figure in the justification costs the argument, not the claim.
+
+    Regression for the run of 18 Sep 2026, where treating this as fatal rejected 22 of 157 claims and
+    took two correct negative fundamental claims with it -- the only things standing between their
+    companies and a BUY rating. A fault in the commentary must not kill a claim whose statement,
+    falsifier and evidence have all passed. The unsupported figure is replaced, never printed.
+    """
+    strong, _ = pair
+    ev = _ev(snapshot, strong, "fundamental_derived")
+    clean = "Return on capital sits well above the sector benchmark and the gap is wide."
+    assert sanitised_justification(clean, snapshot, [ev], strong) == clean
+
+    withheld = sanitised_justification(
+        "Capital efficiency is improving; return on equity reached 8888.88% this year.",
+        snapshot, [ev], strong)
+    assert "8888.88" not in withheld, "the unsupported figure must never reach print"
+    assert "withheld" in withheld.lower()
+
+    # The claim itself still runs the normal gauntlet and survives on its falsifier.
+    claim = _claim(strong, FUND, "roe_pct < sector_roe_pct", evidence=[ev], justification=withheld)
+    verdicts = Adjudicator(snapshot, AuditLog()).adjudicate_claims([claim], phase="4")
+    assert verdicts[claim.claim_id].verdict is Verdict.SURVIVED
 
 
 def test_score_is_weighted_signed_confidence_over_survivors(snapshot, pair):

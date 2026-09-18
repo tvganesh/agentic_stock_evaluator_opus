@@ -14,6 +14,7 @@ cannot trigger further calls. Claims it returns are unverified hypotheses until 
 from __future__ import annotations
 
 from ..claims.schema import Claim, ClaimBatch
+from ..claims.validator import sanitised_justification
 from ..governance.llm_gateway import LLMGateway
 from ..governance.spend import SlotClass, SlotLedger
 from ..snapshot.columns import Dimension
@@ -56,6 +57,11 @@ def run_claim_agent(
         return []
     claims: dict[str, Claim] = {}
     for draft in batch.claims:
-        claim = Claim.from_draft(draft, subject=instrument_key, dimension=dimension, slot_class=slot_class.value)
+        # An unsupported figure in the argument withholds the argument; it does not kill the claim,
+        # whose substance is carried by its statement, falsifier and evidence. Done here, at bind
+        # time, so everything downstream sees a justification that is safe to publish.
+        text = sanitised_justification(draft.justification, snapshot, draft.evidence, instrument_key)
+        claim = Claim.from_draft(draft.model_copy(update={"justification": text}),
+                                 subject=instrument_key, dimension=dimension, slot_class=slot_class.value)
         claims.setdefault(claim.claim_id, claim)
     return list(claims.values())
