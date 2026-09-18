@@ -29,6 +29,25 @@
   .tabs { display:flex; gap:4px; margin:10px 0; }
   .tabs button { flex:1; padding:6px; border:1px solid var(--rule); background:var(--bg); cursor:pointer; }
   .tabs button.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  /* Results tabs carry their own class: the sidebar's slider tabs use .tabs, and one selector
+     over both would make each set toggle the other. */
+  .rtabs { display:flex; flex-wrap:wrap; gap:4px; margin:0 0 12px; }
+  .rtabs button { padding:7px 14px; border:1px solid var(--rule); background:var(--bg); cursor:pointer; font-size:13px; }
+  .rtabs button.active { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .rtabs button .count { font:11px ui-monospace, Menlo, monospace; opacity:.7; margin-left:6px; }
+  .why { border-top:1px solid var(--rule); padding:12px 0; }
+  .why h3 { margin:0 0 6px; font-size:15px; }
+  .why .claim { margin:0 0 10px; }
+  .why .said { margin:0 0 3px; }
+  .why .because { color:var(--muted); font-size:13px; margin:0 0 3px; }
+  .why .test { font:12px ui-monospace, Menlo, monospace; color:var(--muted); }
+  .why .withheld { color:var(--live); }
+  .runbar { display:flex; flex-wrap:wrap; gap:6px 20px; font-size:13px; }
+  .runbar .note { color:var(--muted); font-size:12.5px; flex-basis:100%; }
+  .rec-BUY { color:var(--good); font-weight:700; }
+  .rec-AVOID { color:var(--bad); font-weight:700; }
+  .rec-WATCH { font-weight:600; }
+  .num { text-align:right; font-family:ui-monospace, Menlo, monospace; }
   .slider { margin:10px 0; }
   .slider label { display:flex; justify-content:space-between; gap:8px; font-size:13px; }
   .slider input[type=range] { width:100%; }
@@ -74,9 +93,12 @@
   </aside>
   <main>
     <section><h2>Spend plan</h2><div id="plan" class="muted">Compile a plan to see the committed total.</div></section>
+    <section>
+      <h2>Results</h2>
+      <div class="rtabs" id="rtabs"></div>
+      <div id="results" class="muted">Run something, or open a past run, to see picks and claims.</div>
+    </section>
     <section><h2>Run</h2><div id="run" class="muted">No run yet.</div></section>
-    <section><h2>Claim ledger</h2><div class="tscroll"><table id="ledger"><thead><tr><th>Symbol</th><th>Dim</th><th>Dir</th><th>Claim</th><th>Falsifier</th><th>Verdict</th></tr></thead><tbody></tbody></table></div></section>
-    <section><h2>Dossier</h2><div id="dossier" class="muted">Published picks appear here.</div></section>
   </main>
 </div>
 <script>
@@ -84,6 +106,11 @@
 const $ = (id) => document.getElementById(id);
 const el = (tag, text, cls) => { const e = document.createElement(tag); if (text !== undefined) e.textContent = text; if (cls) e.className = cls; return e; };
 let schema = null, compiled = null, pollTimer = null, activeTab = "fundamental", runModel = null;
+// Latest run state, plus which results tab is open. Held across renders so a poll tick every second
+// cannot snap the reader back to Picks while a run is still in flight.
+let latest = {claims: [], dossier: null}, resultsTab = "picks";
+const RESULT_TABS = [["picks", "Picks"], ["why", "Why"],
+                     ["fundamental", "Fundamental"], ["technical", "Technical"], ["news", "News"]];
 const MODEL_LABELS = {anthropic: "Anthropic API (real, billed)", offline: "offline model (free, not an LLM)"};
 
 function updateApprove() {
@@ -201,13 +228,13 @@ async function loadPastRun(runId) {
   try {
     const s = await api("/api/runs/" + runId);
     renderSeal(s.seal, s.phase);
-    const box = $("run"); box.replaceChildren();
-    box.append(el("p", `run ${s.run_id} · loaded from disk · status ${s.status}`));
-    box.append(el("p", `model: ${s.dossier.header.model_client}`));
-    if (s.spend) box.append(el("p", `spend ${s.spend.spent} of ${s.spend.committed} committed`));
-    for (const note of s.dossier.header.notes || []) box.append(el("p", "note: " + note, "muted"));
-    renderLedger(s.claims || []);
-    renderDossier(s.dossier);
+    const box = $("run"); box.replaceChildren(); box.className = "runbar";
+    box.append(el("span", `run ${s.run_id}`), el("span", "loaded from disk"),
+               el("span", `model: ${s.dossier.header.model_client}`));
+    if (s.spend) box.append(el("span", `spend ${s.spend.spent} of ${s.spend.committed} committed`));
+    for (const note of s.dossier.header.notes || []) box.append(el("span", "note: " + note, "note"));
+    latest = {claims: s.claims || [], dossier: s.dossier};
+    renderResults();
   } catch (e) { $("run").textContent = "Could not load run: " + e.message; }
 }
 
@@ -217,52 +244,115 @@ function poll(runId) {
   const tick = async () => {
     const s = await api("/api/runs/" + runId);
     renderSeal(s.seal, s.phase);
-    const box = $("run"); box.replaceChildren();
-    box.append(el("p", `run ${s.run_id} · status ${s.status} · phase ${s.phase}`));
-    if (runModel) box.append(el("p", `model: ${MODEL_LABELS[runModel]}`, runModel === "anthropic" ? "" : "warn"));
-    if (s.spend) box.append(el("p", runModel === "offline"
+    const box = $("run"); box.replaceChildren(); box.className = "runbar";
+    box.append(el("span", `run ${s.run_id}`), el("span", `status ${s.status}`), el("span", `phase ${s.phase}`));
+    if (runModel) box.append(el("span", `model: ${MODEL_LABELS[runModel]}`, runModel === "anthropic" ? "" : "warn"));
+    if (s.spend) box.append(el("span", runModel === "offline"
       ? `simulated spend ${s.spend.spent} (nothing billed; this is what the token counts would cost on Claude)`
       : `spend ${s.spend.spent} of ${s.spend.committed} committed`));
-    if (s.error) box.append(el("p", s.error, "warn"));
-    renderLedger(s.claims || []);
-    if (s.dossier) renderDossier(s.dossier);
+    if (s.error) box.append(el("span", s.error, "warn"));
+    latest = {claims: s.claims || [], dossier: s.dossier || latest.dossier};
+    renderResults();
     if (s.status !== "running") { clearInterval(pollTimer); $("approve").disabled = false; }
   };
   pollTimer = setInterval(tick, 1000); tick();
 }
 
-function renderLedger(rows) {
-  // Claims appear, then are struck through as adjudication kills them.
-  const tbody = $("ledger").querySelector("tbody"); tbody.replaceChildren();
-  for (const r of rows) {
-    const tr = document.createElement("tr");
-    const dead = !["survived", "pending"].includes(r.verdict);
-    tr.append(el("td", r.symbol), el("td", r.dimension), el("td", r.direction), el("td", r.statement, dead ? "dead" : ""),
-              el("td", r.falsifier), el("td", r.verdict + (r.reason ? " — " + r.reason : ""), "verdict-" + r.verdict));
-    tbody.append(tr);
+function renderResults() {
+  // One tab at a time, so a reader steps through the run instead of scrolling past all of it.
+  const d = latest.dossier, claims = latest.claims || [];
+  const counts = {picks: d ? d.picks.length + d.avoid.length : 0, why: 0};
+  for (const [key] of RESULT_TABS.slice(2)) counts[key] = claims.filter((c) => c.dimension === key).length;
+  counts.why = d ? d.picks.concat(d.avoid).filter((p) => p.surviving_claims.length).length : 0;
+
+  const bar = $("rtabs"); bar.replaceChildren();
+  for (const [key, label] of RESULT_TABS) {
+    const b = el("button", label, key === resultsTab ? "active" : "");
+    b.append(el("span", String(counts[key] ?? 0), "count"));
+    b.onclick = () => { resultsTab = key; renderResults(); };
+    bar.append(b);
   }
+
+  const box = $("results"); box.replaceChildren(); box.className = "";
+  if (!d && !claims.length) { box.className = "muted"; box.textContent = "Nothing to show yet."; return; }
+  if (resultsTab === "picks") renderPicks(box, d);
+  else if (resultsTab === "why") renderWhy(box, d);
+  else renderDimension(box, claims, resultsTab);
 }
 
-function renderDossier(d) {
-  // Picks with surviving claims, each with its falsifier attached.
-  const box = $("dossier"); box.replaceChildren();
+function renderPicks(box, d) {
+  // The shortlist itself: what to do, how strongly, and which dimensions carried it.
+  if (!d) { box.className = "muted"; box.textContent = "No dossier yet; picks appear when the run publishes."; return; }
   const h = d.header;
   box.append(el("p", `As of ${h.as_of} · prices to ${h.prices_as_of ?? "unknown"} · snapshot ${h.reproducibility.snapshot.slice(0, 12)}… · screen ${h.reproducibility.screen_config.slice(0, 12)}… · plan ${h.reproducibility.plan.slice(0, 12)}…`));
   if (h.synthetic_data) box.append(el("p", "SYNTHETIC DATA — not real companies or prices.", "warn"));
-  if (h.model_client !== "anthropic") box.append(el("p", `Model client: ${h.model_client} (not an LLM).`, "warn"));
+  if (h.model_client !== "anthropic") box.append(el("p", `Model client: ${h.model_client}.`, "warn"));
   if (h.abstention) box.append(el("p", h.abstention, "warn"));
+
+  const wrap = el("div", undefined, "tscroll");
+  const table = document.createElement("table");
+  const head = document.createElement("tr");
+  for (const c of ["Symbol", "Call", "Score", "Fundamental", "Technical", "News", "Claims"]) head.append(el("th", c));
+  table.append(head);
   for (const p of d.picks.concat(d.avoid)) {
-    const card = el("div", undefined, "pick");
-    card.append(el("h3", `${p.trading_symbol} — ${p.recommendation} (score ${p.score.toFixed(2)})`));
-    const ul = document.createElement("ul");
-    for (const c of p.surviving_claims) {
-      const li = el("li", `[${c.dimension}, ${c.direction}, ${c.confidence.toFixed(2)}] ${c.statement} `);
-      li.append(el("code", "wrong if: " + c.falsifier)); ul.append(li);
-    }
-    for (const c of p.refuted_or_vetoed_claims) { const li = el("li", `${c.verdict}: ${c.statement} — ${c.reason}`, "dead"); ul.append(li); }
-    card.append(ul); box.append(card);
+    const t = p.claim_tallies || {};
+    const signed = (k) => (t[k] ? t[k].signed_confidence.toFixed(2) : "—");
+    const tr = document.createElement("tr");
+    tr.append(el("td", p.trading_symbol), el("td", p.recommendation, "rec-" + p.recommendation),
+              el("td", p.score.toFixed(2), "num"), el("td", signed("fundamental"), "num"),
+              el("td", signed("technical"), "num"), el("td", signed("news"), "num"),
+              el("td", String(p.surviving_claims.length), "num"));
+    table.append(tr);
   }
+  wrap.append(table); box.append(wrap);
   box.append(el("p", h.disclaimer, "muted"));
+}
+
+function renderWhy(box, d) {
+  // What the model concluded and why, in its own words -- figure-checked against the cited evidence.
+  if (!d) { box.className = "muted"; box.textContent = "No dossier yet."; return; }
+  const entries = d.picks.concat(d.avoid).filter((p) => p.surviving_claims.length);
+  if (!entries.some((p) => p.surviving_claims.some((c) => c.justification))) {
+    box.append(el("p", "This run predates recorded justifications, so there is no reasoning to show. "
+                    + "Claims and falsifiers are in the dimension tabs.", "muted"));
+  }
+  for (const p of entries) {
+    const card = el("div", undefined, "why");
+    card.append(el("h3", `${p.trading_symbol} — ${p.recommendation} (score ${p.score.toFixed(2)})`));
+    for (const c of p.surviving_claims) {
+      const claim = el("div", undefined, "claim");
+      claim.append(el("p", `[${c.dimension} · ${c.direction} · ${c.confidence.toFixed(2)}] ${c.statement}`, "said"));
+      if (c.justification) {
+        // A withheld justification is shown as such: the claim stands, its argument did not.
+        const withheld = c.justification.startsWith("(Justification withheld");
+        claim.append(el("p", c.justification, withheld ? "because withheld" : "because"));
+      }
+      claim.append(el("p", "wrong if: " + c.falsifier, "test"));
+      card.append(claim);
+    }
+    box.append(card);
+  }
+}
+
+function renderDimension(box, claims, dimension) {
+  // Every claim of one dimension with its falsifier and verdict, killed ones struck through.
+  const rows = claims.filter((c) => c.dimension === dimension);
+  if (!rows.length) { box.className = "muted"; box.textContent = `No ${dimension} claims in this run.`; return; }
+  const wrap = el("div", undefined, "tscroll");
+  const table = document.createElement("table");
+  const head = document.createElement("tr");
+  for (const c of ["Symbol", "Dir", "Conf", "Claim", "Falsifier", "Verdict"]) head.append(el("th", c));
+  table.append(head);
+  for (const r of rows) {
+    const dead = !["survived", "pending"].includes(r.verdict);
+    const tr = document.createElement("tr");
+    tr.append(el("td", r.symbol), el("td", r.direction),
+              el("td", r.confidence === undefined ? "—" : Number(r.confidence).toFixed(2), "num"),
+              el("td", r.statement, dead ? "dead" : ""), el("td", r.falsifier),
+              el("td", r.verdict + (r.reason ? " — " + r.reason : ""), "verdict-" + r.verdict));
+    table.append(tr);
+  }
+  wrap.append(table); box.append(wrap);
 }
 
 async function init() {
@@ -272,6 +362,9 @@ async function init() {
   renderSeal(gov.seal, null);
   for (const s of snaps) { const o = el("option", `${s.as_of} · ${s.source} · ${s.universe_size} · ${s.root_hash.slice(0, 10)}…`); o.value = s.root_hash; $("snapshot").append(o); }
   if (!snaps.length) $("hint").textContent = "No snapshots yet: run `python -m sealed_window acquire` first.";
+  renderResults();
+  // Scoped to .tabs: the results tabs use .rtabs and wire their own handlers, so neither set of
+  // buttons can toggle the other.
   document.querySelectorAll(".tabs button").forEach((b) => b.onclick = () => {
     captureTab(); activeTab = b.dataset.tab;
     document.querySelectorAll(".tabs button").forEach((x) => x.classList.toggle("active", x === b));
