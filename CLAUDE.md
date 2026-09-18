@@ -171,5 +171,46 @@ ledger where claims appear and are struck through as they are killed, and the do
 - **Numbers are computed in Python, never by a model.** A model interprets; it does not calculate.
 - **Every module, class, function and method carries a docstring** saying what it does and how it
   relates to the system. Nothing enforces this automatically — it holds by review, so keep it up.
-- **Tests require no network and no credentials.** `.venv/bin/python -m pytest -q` — 168 at present.
+- **Tests require no network and no credentials.** `.venv/bin/python -m pytest -q` — 196 at present.
 - **`data/` is not committed**: snapshots, audit logs, run artefacts and backtests are regenerable.
+
+---
+
+## Open question: should a claim carry its proof as well as its disproof?
+
+**Parked 18 Sep 2026, not started.** Recorded because it is the only known fix for the one hazard
+the system cannot currently detect.
+
+Today a claim carries a *falsifier* — the condition that is true when the claim is wrong. The dual,
+a *substantiator* (`substantiator ≡ NOT falsifier`), carries identical information and reads without
+the double negative. Either alone is equally gameable. The interesting option is **requiring both**
+and machine-checking that they are actual negations, by evaluating the pair across the scenario
+values `dsl.is_reachable` already enumerates and requiring they disagree on every trial.
+
+**Why it matters.** It is the only mechanical defence against an inverted falsifier, which is
+otherwise undetectable: the predicate is well formed, evaluable and reachable, and only its relation
+to an English sentence is wrong. A real case — statement "the operating margin has improved",
+falsifier `operating_margin_delta_1y_pp >= 0`, actual value −1.62 — survived at confidence 0.95
+while being false. With both predicates, the model writes `> 0` to match its own sentence, the pair
+fails to be a negation, and the claim dies.
+
+**What the evidence says about feasibility.** Models that can hold the negation do so reliably:
+Claude produced 289 claims with 1 fired predicate (0.4%), and that one was a genuine self-refutation,
+not a direction error. Small local models slip about 1 time in 9 (9 of 79), and 6 of those 9 were
+direction errors — always toward stating the supporting condition.
+
+A first attempt to measure whether qwen3:8b can produce matched pairs was **flawed and its headline
+number should be ignored**: the probe prompt omitted the column catalogue, so 10 of 16 answers failed
+to parse on invented column names. Of the 6 that parsed, direction was correct 6 times out of 6; the
+3 counted as mismatches were all 100× unit slips (percent written as a fraction, `-0.05` for `-5`).
+A fair re-run with the catalogue and units in the prompt was never completed.
+
+**Costs before adopting.** A required field on `ClaimDraft` is a breaking change reaching prompts,
+validator, adjudicator, dossier, tests and both guides, and it invalidates comparison with existing
+runs. Locally the binding cost is time, not tokens: at ~8 tok/s prefill a second predicate adds
+roughly an hour to a 20-candidate run. If a weak model cannot produce consistent pairs, the check
+should record the inconsistency as a note for local runs rather than reject, so the cheap test bed
+that found the pinned-threshold, circular-refutation and truncation bugs stays usable.
+
+Separately and much smaller: the dossier could render "holds because `NOT(falsifier)`" beside each
+claim today, with no schema change, which answers the readability complaint on its own.
