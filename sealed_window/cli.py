@@ -188,6 +188,100 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_readjudicate(args: argparse.Namespace) -> int:
+    """Re-run phases 4-6 over a stored run's claims under the current rules. No model calls, no cost.
+
+    Adjudication rules change -- a vacuity check tightens, a validator learns to withhold rather than
+    reject -- and a stored run then disagrees with what the same claims would yield today. Re-running
+    the models to find out would pay twice for the same judgements, and would not even answer the
+    question, since a second run returns different claims.
+
+    Every input is already on disk: the claims the models produced, the snapshot they were checked
+    against, and the settings that selected the candidates. What this recomputes is only the part
+    that never involved a model -- adjudication, scoring and the report.
+
+    The derived screen and plan hashes are checked against the stored run's reproducibility triple
+    and the command refuses on any mismatch, so a dossier can never be rebuilt from inputs other than
+    the ones that produced it. Output goes to a new run directory; the original is never modified.
+    """
+    enter_sealed_role()
+    from .adjudicate.adjudicator import Adjudicator
+    from .claims.schema import Claim, Refutation, Verdict
+    from .claims.validator import WITHHELD_JUSTIFICATION, sanitised_justification
+    from .governance.audit import AuditLog
+    from .orchestrator import RunState, prepare_run
+    from .publish.dossier import build_dossier, render_markdown
+
+    source = args.runs / args.run
+    stored = json.loads((source / "dossier.json").read_text(encoding="utf-8"))
+    ledger = json.loads((source / "claims.json").read_text(encoding="utf-8"))
+    header = stored["header"]
+    triple = header["reproducibility"]
+
+    prepared = prepare_run(args.snapshots, triple["snapshot"], _load_screen_config(args.screen),
+                           None, args.model, args.local_model)
+    for label, derived, recorded in (("screen config", prepared.screen.config_hash, triple["screen_config"]),
+                                     ("plan", prepared.plan.plan_hash, triple["plan"])):
+        if derived != recorded:
+            print(f"refusing: {label} hash {derived[:12]}… does not match the stored run's "
+                  f"{recorded[:12]}…; re-adjudicate with the settings that produced it", file=sys.stderr)
+            return 2
+
+    snapshot = prepared.snapshot
+    claims, withheld = [], 0
+    for record in ledger["claims"]:
+        record = dict(record)
+        text = sanitised_justification(record["justification"], snapshot, record["evidence"], record["subject"])
+        withheld += text == WITHHELD_JUSTIFICATION
+        claims.append(Claim.model_validate({**record, "justification": text}))
+    refutations = [Refutation.model_validate(r) for r in ledger["refutations"]]
+
+    state = RunState()
+    run_dir = args.runs / state.run_id
+    run_dir.mkdir(parents=True, exist_ok=True)
+    # Constructed with its destination: the log streams entries as they are recorded, so every
+    # verdict this command reaches is on disk and hash-chained exactly as in a full run.
+    audit = AuditLog(run_dir / "audit.jsonl")
+    audit.record("readjudicate.start", {"source_run": args.run, "snapshot": triple["snapshot"],
+                                        "screen_config": triple["screen_config"], "plan": triple["plan"]})
+    adjudicator = Adjudicator(snapshot, audit)
+    verdicts = adjudicator.adjudicate_claims(claims, phase="4_adjudicate")
+    surviving = {c.claim_id: c for c in claims if verdicts[c.claim_id].verdict is Verdict.SURVIVED}
+    if refutations and surviving:
+        ref_verdicts, vetoed = adjudicator.adjudicate_refutations(refutations, surviving,
+                                                                  phase="4b_adjudicate_veto")
+        verdicts.update(ref_verdicts)
+        verdicts.update(vetoed)
+
+    notes = list(header.get("notes", [])) + [
+        f"re-adjudication of run {args.run} under the current rules; no model was called, and the "
+        f"claims are exactly those that run produced",
+        f"{withheld} justification(s) withheld for citing a figure absent from the cited evidence",
+    ]
+    dossier = build_dossier(run_id=state.run_id, snapshot=snapshot, screen=prepared.screen,
+                            plan=prepared.plan, spend_summary=header["spend"], claims=claims,
+                            refutations=refutations, verdicts=verdicts,
+                            model_client=header["model_client"], notes=notes)
+
+    (run_dir / "dossier.json").write_text(json.dumps(dossier, indent=2, sort_keys=True), encoding="utf-8")
+    (run_dir / "dossier.md").write_text(render_markdown(dossier), encoding="utf-8")
+    (run_dir / "claims.json").write_text(json.dumps({
+        "claims": [c.model_dump(mode="json") for c in claims],
+        "refutations": [r.model_dump(mode="json") for r in refutations],
+        "verdicts": {k: v.model_dump(mode="json") for k, v in sorted(verdicts.items())},
+    }, indent=2, sort_keys=True), encoding="utf-8")
+    audit.record("readjudicate.published", {"picks": len(dossier["picks"]), "avoid": len(dossier["avoid"]),
+                                            "withheld_justifications": withheld})
+
+    funnel = dossier["header"]["funnel"]
+    print(f"re-adjudicated {args.run} -> {state.run_id}")
+    print(f"  claims {funnel['claims']} -> survived {funnel['claims_survived']} "
+          f"(vetoed {funnel['claims_vetoed']}), {withheld} justification(s) withheld")
+    print(f"  published {funnel['published_picks']} pick(s), avoid {funnel['avoid']}")
+    print(f"dossier: {run_dir / 'dossier.md'}")
+    return 0
+
+
 def cmd_backtest(args: argparse.Namespace) -> int:
     """Run the price-only walk-forward over a snapshot and write its report (no model, no network)."""
     enter_sealed_role()
@@ -280,6 +374,18 @@ def build_parser() -> argparse.ArgumentParser:
             cmd.add_argument("--approve-plan", required=True, help="plan hash printed by the plan command")
             cmd.add_argument("--concurrency", type=int, default=4)
         cmd.set_defaults(func=func)
+
+    readj = sub.add_parser("readjudicate",
+                           help="re-run phases 4-6 over a stored run's claims under current rules (no model calls)")
+    readj.add_argument("--run", required=True, help="run id under the runs directory")
+    readj.add_argument("--screen", type=Path, default=DEFAULT_SCREEN,
+                       help="the screen config that produced the stored run; its hash must match")
+    # The plan's slot specs depend on the mode, so the stored plan hash only reproduces under the
+    # mode that produced it. A mismatch is refused rather than rebuilt from different inputs.
+    readj.add_argument("--model", choices=MODEL_MODES, default="anthropic",
+                       help="the model mode the stored run used")
+    readj.add_argument("--local-model", default=DEFAULT_LOCAL_MODEL)
+    readj.set_defaults(func=cmd_readjudicate)
 
     backtest = sub.add_parser("backtest", help="price-only walk-forward over a snapshot's candles")
     backtest.add_argument("--snapshot", required=True, help="snapshot root hash")
