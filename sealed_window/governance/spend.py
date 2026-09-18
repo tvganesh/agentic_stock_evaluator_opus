@@ -112,7 +112,13 @@ DEFAULT_SLOT_SPECS: tuple[SlotClassSpec, ...] = (
     # A probe turn re-reads the conversation and one returned table, then answers briefly: the
     # judgement already happened on the analyst's model, so the cheap model carries the round trip.
     SlotClassSpec(SlotClass.PROBE, "claude-haiku-4-5", 12_000, 1_500, None, "probe"),
-    SlotClassSpec(SlotClass.VETO, "claude-sonnet-5", 40_000, 16_000, "high", "veto_batch"),
+    # 24,000 output, not 16,000: on an adaptive-thinking model the budget covers the reasoning as well
+    # as the answer, and the reasoning dominates. Measured 18 Sep 2026 -- one veto spent 15,733 output
+    # tokens to emit 136 tokens of JSON (0.9%), and another consumed all 16,000 thinking and was cut off
+    # before writing any JSON at all, losing every refutation for its batch after the call was paid for.
+    # Thinking length tracks how hard the judgement is, not how many claims are shown, so smaller
+    # batches do not prevent it: a 31-claim batch was lost while a 37-claim one survived.
+    SlotClassSpec(SlotClass.VETO, "claude-sonnet-5", 40_000, 24_000, "high", "veto_batch"),
 )
 """Model tiering from the architecture: Sonnet for deep analysis and veto, Haiku for news.
 
