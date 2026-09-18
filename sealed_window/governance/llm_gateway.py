@@ -68,6 +68,17 @@ class ModelResult:
     request_id: str | None = None
     detail: str | None = None
     usage_estimated: bool = False
+    thinking: str | None = None
+    """The model's extended-thinking text, when it produced any.
+
+    Billed as output and charged against ``max_tokens``, so on a thinking model it is most of what
+    a call costs: one veto on 18 Sep 2026 spent 15,733 output tokens to emit 136 tokens of JSON.
+    Discarding it meant paying for reasoning and keeping only the conclusion.
+
+    It is recorded for review, never for publication. The dossier is assembled from adjudicated
+    claims alone, because a claim carries a falsifier the machine re-checks against the snapshot
+    while this is unverified prose. Putting it in the report would place a sentence in front of a
+    reader that nothing checked."""
 
 
 class ModelClient(Protocol):
@@ -150,7 +161,8 @@ class AnthropicModelClient:
         if response.stop_reason == "refusal" and getattr(response, "stop_details", None):
             detail = str(getattr(response.stop_details, "category", None))
         return ModelResult(parsed, str(response.stop_reason), input_tokens, usage.output_tokens or 0,
-                           request_id=getattr(response, "_request_id", None), detail=detail)
+                           request_id=getattr(response, "_request_id", None), detail=detail,
+                           thinking=_thinking_text(response))
 
 
 DEGRADED_STOP_REASONS: frozenset[str] = frozenset({
@@ -166,6 +178,30 @@ This distinction has already cost a diagnosis. Two local runs published dossiers
 recorded no refutations; that read as an auditor with nothing to object to, and it took a canary
 probe to establish the auditor had never received the claims at all. Only the gateway can tell the
 two apart, because only the gateway sees ``stop_reason``."""
+
+
+def _thinking_text(response: Any) -> str | None:
+    """Join the extended-thinking blocks of a response, or ``None`` if it did no visible thinking.
+
+    Thinking arrives as its own content blocks alongside the answer. Redacted blocks carry opaque
+    encrypted data rather than readable text, so they are noted by count rather than decoded.
+
+    Read defensively through ``getattr``: this runs inside a paid call, and a change to the SDK's
+    block shape should cost the transcript its reasoning, never cost the run its result.
+    """
+    blocks = getattr(response, "content", None) or []
+    parts, redacted = [], 0
+    for block in blocks:
+        kind = getattr(block, "type", None)
+        if kind == "thinking":
+            text = getattr(block, "thinking", None)
+            if text:
+                parts.append(str(text))
+        elif kind == "redacted_thinking":
+            redacted += 1
+    if redacted:
+        parts.append(f"[{redacted} redacted thinking block(s): encrypted by the provider, not readable here]")
+    return "\n\n".join(parts) if parts else None
 
 
 class LLMGateway:
@@ -280,6 +316,10 @@ class LLMGateway:
             "prompt_hash": prompt_hash,
             "stop_reason": result.stop_reason,
             "output": parsed.model_dump(mode="json") if parsed is not None else None,
+            # Recorded for review, never published. Kept even when the call produced no output: a
+            # call truncated at max_tokens spent its whole budget here, and this is the only record
+            # of what it was doing. The key is named to make its status unmistakable to a reader.
+            "unverified_thinking": result.thinking,
         }, sort_keys=True)
         with self._transcript_lock, self._transcript_path.open("a", encoding="utf-8") as handle:
             handle.write(line + "\n")

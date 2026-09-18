@@ -182,11 +182,21 @@ class LocalOpenAIModelClient:
         finish = str(choice.get("finish_reason") or "stop")
         stop_reason = {"stop": "end_turn", "length": "max_tokens"}.get(finish, finish)
 
+        # Read before the truncation check, not after: a call cut off at max_tokens spent its whole
+        # budget reasoning, so that is exactly the case where this is the only record of what it did.
+        # Suppressed by REASONING_EFFORT today, so normally empty; captured for symmetry with the
+        # Anthropic client so the transcript means the same thing whichever model produced it.
+        message = choice.get("message") or {}
+        thinking = message.get("reasoning_content") or message.get("reasoning") or None
+
         if stop_reason == "max_tokens":  # truncated JSON is not worth parsing
             return ModelResult(None, stop_reason, input_tokens, output_tokens,
-                               detail=f"output truncated at max_tokens={request.max_tokens}")
+                               detail=f"output truncated at max_tokens={request.max_tokens}",
+                               thinking=thinking)
+
         try:
             parsed = request.output_type.model_validate_json(content)
         except ValidationError as exc:
-            return ModelResult(None, "schema_error", input_tokens, output_tokens, detail=str(exc)[:200])
-        return ModelResult(parsed, stop_reason, input_tokens, output_tokens)
+            return ModelResult(None, "schema_error", input_tokens, output_tokens, detail=str(exc)[:200],
+                               thinking=thinking)
+        return ModelResult(parsed, stop_reason, input_tokens, output_tokens, thinking=thinking)

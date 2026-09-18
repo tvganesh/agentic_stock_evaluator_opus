@@ -8,6 +8,7 @@ dispatched, models only run in model phases, and actual cost can never exceed it
 from __future__ import annotations
 
 import dataclasses
+import json
 
 import pytest
 
@@ -192,6 +193,40 @@ def test_degraded_calls_are_surfaced_and_clean_ones_are_not():
     healthy.call(ledger2.acquire(SlotClass.DEEP_NEWS), system="s", user="u",
                  output_type=ClaimBatch, purpose={"agent": "claim.news"})
     assert healthy.drain_degraded() == []
+
+
+def test_thinking_is_recorded_for_review_but_never_published(tmp_path):
+    """Extended thinking reaches the transcript, including when the call produced nothing else.
+
+    On a thinking model the reasoning is most of what a call costs -- one veto on 18 Sep 2026 spent
+    15,733 output tokens to emit 136 tokens of JSON -- and discarding it meant paying for reasoning
+    and keeping only the conclusion. A call truncated at max_tokens spent its entire budget thinking,
+    so that is precisely where the record matters most.
+    """
+    transcript = tmp_path / "transcript.jsonl"
+    reasoning = "Price sits 1.09% above the 200-day average but below the 20- and 50-day."
+    client = FakeClient(result=ModelResult(ClaimBatch(claims=[]), "end_turn", 90, 50, thinking=reasoning))
+    SEAL.seal()
+    audit = AuditLog()
+    ledger = SlotLedger(_plan(2), audit)
+    phases = PhaseMachine()
+    phases.advance(RunPhase.SCREEN)
+    phases.advance(RunPhase.CLAIM)
+    gateway = LLMGateway(ledger=ledger, audit=audit, client=client, phases=phases, transcript_path=transcript)
+    gateway.call(ledger.acquire(SlotClass.DEEP_TECHNICAL), system="s", user="u",
+                 output_type=ClaimBatch, purpose={})
+
+    # A truncated call yields no output, but its reasoning is the only record of what it was doing.
+    # Charged to a veto slot, the one priced for 24,000 output tokens: this is the veto#39 case, where
+    # the whole budget went to thinking and the call was cut off before writing any JSON at all.
+    client.result = ModelResult(None, "max_tokens", 90, 24_000, thinking="Weighing the trend claims…")
+    gateway.call(ledger.acquire(SlotClass.VETO), system="s", user="u",
+                 output_type=ClaimBatch, purpose={})
+
+    lines = [json.loads(line) for line in transcript.read_text(encoding="utf-8").splitlines()]
+    assert lines[0]["unverified_thinking"] == reasoning
+    assert lines[1]["output"] is None and lines[1]["unverified_thinking"] == "Weighing the trend claims…"
+    assert "thinking" not in json.dumps(lines[0]["output"]), "reasoning never leaks into the claim itself"
 
 
 def test_model_request_surface_has_no_tools():
