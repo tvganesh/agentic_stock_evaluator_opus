@@ -57,6 +57,11 @@ Rules:
    the facts it relies on. At least one cited record must have a "dimension" field equal to your own
    dimension. A claim citing only other dimensions' evidence is rejected before it is ever checked:
    a news claim that reads the price reaction must still cite the news record it is about.
+1a. Every claim also carries a justification: the argument behind it. Name the figures that carry the
+   claim, say what they imply, and say what in the same evidence argues against it -- a reader should
+   be able to judge how strong the claim is, not just what it asserts. Two to four sentences. It is
+   published beside the claim and held to the same rule as the statement: quote only figures that
+   appear in the cited evidence, or the whole claim is rejected. Do not restate the statement.
 2. Every claim carries a falsifier in the language below over the listed columns. Make it tight:
    it should fire if the claim's core assertion were false for this company today.
 3. Quote only figures that appear in the cited evidence. Do not compute new numbers in the statement.

@@ -47,6 +47,24 @@ class ClaimDraft(BaseModel):
     )
     direction: Direction = Field(description="positive if it supports owning the stock, negative if it undermines it")
     statement: str = Field(min_length=10, max_length=400, description="One or two plain sentences; cite only figures present in the evidence")
+    justification: str = Field(
+        min_length=40,
+        max_length=800,
+        description=(
+            "Why this claim follows from the evidence: which figures carry it, what they imply, and "
+            "what in the same evidence argues against it. Quote only figures present in the cited "
+            "evidence; invented numbers are rejected here exactly as in the statement."
+        ),
+    )
+    """The argument behind the claim, held to the same figure check as the statement.
+
+    A model's private deliberation is not recoverable -- the provider returns the thinking block
+    with its signature but an empty text field -- so this is asked for outright instead. It is the
+    model's *argument*, written as it reaches the conclusion, not a recording of how it got there;
+    post-hoc justification can be a plausible story rather than the causal path. What makes it
+    publishable rather than prose is :func:`~sealed_window.claims.validator.unsupported_figures`,
+    which rejects any figure absent from the cited evidence. The falsifier remains the part a
+    machine re-checks against the snapshot."""
     evidence: list[EvidenceRef] = Field(min_length=1, max_length=8, description="Evidence IDs from the snapshot slice")
     confidence: float = Field(ge=0.05, le=0.95, description="Probability the claim is true given the evidence")
     falsifier: str = Field(min_length=3, max_length=300, description="DSL predicate over snapshot columns that, if TRUE, refutes the claim")
@@ -91,6 +109,7 @@ class Claim(BaseModel):
     predicate: str
     direction: Direction
     statement: str
+    justification: str
     evidence: list[str]
     confidence: float
     falsifier: str

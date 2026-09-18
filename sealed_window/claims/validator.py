@@ -114,6 +114,11 @@ def validate_claim(claim: Claim, snapshot: SealedSnapshot) -> ValidationResult:
     missing = unsupported_figures(claim.statement, records)
     if missing:
         return ValidationResult(False, f"statement figure {missing[0]} does not appear in cited evidence")
+    # The justification is published beside the claim, so it is held to the same standard: a model
+    # explaining itself must not reach for a figure the evidence does not contain.
+    missing = unsupported_figures(claim.justification, records)
+    if missing:
+        return ValidationResult(False, f"justification figure {missing[0]} does not appear in cited evidence")
     return _check_falsifier(claim.falsifier, claim.dimension)
 
 

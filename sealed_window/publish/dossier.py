@@ -74,6 +74,7 @@ def _claim_view(claim: Claim, verdict: Adjudication | None) -> dict[str, Any]:
         "direction": claim.direction.value,
         "predicate": claim.predicate,
         "statement": claim.statement,
+        "justification": claim.justification,
         "confidence": claim.confidence,
         "evidence": claim.evidence,
         "falsifier": claim.falsifier,
@@ -201,6 +202,12 @@ def _render_claim(view: dict[str, Any], struck: bool = False) -> list[str]:
     statement = f"~~{view['statement']}~~" if struck else view["statement"]
     lines = [
         f"- **[{view['dimension']} · {view['direction']} · conf {view['confidence']:.2f}]** {statement}",
+    ]
+    # The argument behind the claim, printed beneath it. Held to the same figure check as the
+    # statement, so it is evidence-bound prose rather than commentary; older dossiers lack it.
+    if view.get("justification"):
+        lines.append(f"  - why: {view['justification']}")
+    lines += [
         f"  - would be wrong if: `{view['falsifier']}`",
         f"  - evidence: {', '.join(view['evidence'])}",
     ]

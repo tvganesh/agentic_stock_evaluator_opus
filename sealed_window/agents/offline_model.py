@@ -77,9 +77,20 @@ class OfflineHeuristicModel:
     @staticmethod
     def _draft(predicate: str, direction: str, statement: str, evidence: list[str], confidence: float,
                falsifier: str) -> ClaimDraft:
-        """Build a validated ClaimDraft."""
+        """Build a validated ClaimDraft, deriving the justification from the rule that produced it.
+
+        A real analyst argues for its claim; this stand-in has no argument to give, so it says so
+        plainly rather than inventing one. Deliberately free of figures: the justification passes the
+        same ``unsupported_figures`` check as the statement, and a number here that happened not to
+        appear in the cited record would fail an offline run for no useful reason.
+        """
+        justification = (
+            f"Produced by the offline rule for {predicate} rather than by a model, so there is no "
+            f"argument behind it beyond the rule itself. It stands or falls on its falsifier, "
+            f"`{falsifier}`, which the adjudicator evaluates against the snapshot."
+        )
         return ClaimDraft(predicate=predicate, direction=direction, statement=statement, evidence=evidence,
-                          confidence=confidence, falsifier=falsifier)
+                          confidence=confidence, falsifier=falsifier, justification=justification)
 
     def _fundamental(self, by_kind: dict[str, dict], records: list[dict]) -> list[ClaimDraft]:
         """Rules over fundamental_derived: ROE vs sector, growth, margins, leverage."""

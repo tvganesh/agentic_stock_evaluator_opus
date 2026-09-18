@@ -30,11 +30,16 @@ def _ev(snapshot, key: str, kind: str) -> str:
     return next(r["evidence_id"] for r in snapshot.evidence_for(key) if r["kind"] == kind)
 
 
+#: Figure-free on purpose: the justification passes the same ``unsupported_figures`` check as the
+#: statement, so a number here would fail corpus cases that are about something else entirely.
+_JUSTIFICATION = "Return on capital sits above the sector benchmark and the gap is wide enough to survive a weak quarter."
+
+
 def _claim(key, dimension, falsifier, *, evidence, statement="Capital efficiency compares well with peers.",
-           direction="positive", confidence=0.7) -> Claim:
+           direction="positive", confidence=0.7, justification=_JUSTIFICATION) -> Claim:
     """Build a harness-bound claim from draft fields."""
     draft = ClaimDraft(predicate="test_claim", direction=direction, statement=statement, evidence=evidence,
-                       confidence=confidence, falsifier=falsifier)
+                       confidence=confidence, falsifier=falsifier, justification=justification)
     return Claim.from_draft(draft, subject=key, dimension=dimension, slot_class="deep.test")
 
 
@@ -61,6 +66,12 @@ def test_adversarial_corpus_every_false_claim_is_killed(snapshot, pair):
         "another stock's evidence": (_claim(weak, FUND, "roe_pct < 1", evidence=[ev_strong]), Verdict.REJECTED),
         "invented figure": (_claim(weak, FUND, "roe_pct < 1", evidence=[ev_weak],
                                    statement="ROE is a remarkable 9999.99% this year."), Verdict.REJECTED),
+        # The justification is published beside the claim, so a model may not reach for a figure the
+        # evidence lacks while explaining itself. This is what makes it evidence-bound rather than prose.
+        "invented figure in the justification": (
+            _claim(weak, FUND, "roe_pct < 1", evidence=[ev_weak],
+                   justification="Capital efficiency is improving because return on equity reached 8888.88% "
+                                 "this year, which is far above the sector."), Verdict.REJECTED),
         "wrong-dimension falsifier": (_claim(weak, FUND, "rsi_14 > 99", evidence=[ev_weak]), Verdict.REJECTED),
         "no own-dimension evidence": (_claim(weak, FUND, "roe_pct < 1", evidence=[ev_weak_tech]), Verdict.REJECTED),
         "unparseable falsifier": (_claim(weak, FUND, "roe_pct <<< 3", evidence=[ev_weak]), Verdict.REJECTED),
