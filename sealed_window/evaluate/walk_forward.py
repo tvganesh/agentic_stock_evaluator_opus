@@ -44,6 +44,14 @@ from ..snapshot.store import SealedSnapshot
 BACKTEST_VERSION = "walk-forward-v1"
 PRICE_ONLY_DIMENSIONS = frozenset({Dimension.TECHNICAL})
 
+NON_FILTER_FIELDS = frozenset({"max_candidates", "ranking"})
+"""Screen-config fields that shape a run without filtering on a column.
+
+Listed explicitly rather than inferred. ``_config_field_column`` returns ``None`` for anything it
+cannot map, so an unlisted field would pass the price-only check silently whatever it meant -- and
+a guard that lets things through by accident is not a guard. A new field belongs here only once
+someone has decided it cannot leak the future."""
+
 INDICATOR_LOOKBACK_SESSIONS = 300
 """Sessions of history handed to the indicator engine per window.
 
@@ -211,7 +219,7 @@ def assert_price_only(config: ScreenConfig) -> None:
     """
     leaking = []
     for field_name, value in config.model_dump(mode="json").items():
-        if value is None or field_name == "max_candidates":
+        if value is None or field_name in NON_FILTER_FIELDS:
             continue
         column = _config_field_column(field_name)
         if column is not None and COLUMNS[column].dimension is not Dimension.TECHNICAL:

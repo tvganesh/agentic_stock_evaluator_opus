@@ -23,14 +23,17 @@ allowlist. Adding them is a reviewed change to ``governance.policy`` plus new co
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..snapshot.hashing import hash_object
 
-SCREEN_CONFIG_VERSION = "screen-v2"
-"""v2: bank-aware filters and return-on-capital ordering. Bumped so identical slider values under
-different semantics never share a config hash."""
+SCREEN_CONFIG_VERSION = "screen-v3"
+"""v3: composite percentile ordering by default. Bumped so identical slider values under different
+semantics never share a config hash -- which also means runs recorded under v2 no longer reproduce
+their config hash, and ``readjudicate`` will correctly refuse them. Their stored dossiers remain
+readable; they simply cannot be rebuilt under rules they were not produced by."""
 
 
 class ScreenConfig(BaseModel):
@@ -62,6 +65,11 @@ class ScreenConfig(BaseModel):
 
     # ---- Run shape ---------------------------------------------------------------------
     max_candidates: int = Field(30, ge=1, le=150, description="Cap on candidates sent to the claim phase")
+    ranking: Literal["composite", "return_on_capital"] = Field(
+        "composite",
+        description="How survivors are ordered before truncation: composite percentile across "
+                    "quality, value, growth, trend and risk, or the older single-factor ordering",
+    )
 
     @model_validator(mode="after")
     def _bands_are_ordered(self) -> "ScreenConfig":
