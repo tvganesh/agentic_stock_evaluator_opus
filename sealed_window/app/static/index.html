@@ -47,7 +47,16 @@
   .rec-BUY { color:var(--good); font-weight:700; }
   .rec-AVOID { color:var(--bad); font-weight:700; }
   .rec-WATCH { font-weight:600; }
-  .num { text-align:right; font-family:ui-monospace, Menlo, monospace; }
+  .num { text-align:right; font-family:ui-monospace, Menlo, monospace; white-space:nowrap; }
+  th.num { text-align:right; }
+  td.sym, th.sym { white-space:nowrap; font-weight:600; }
+  td.fals { font-family:ui-monospace, Menlo, monospace; font-size:11.5px; }
+  thead th { border-bottom:2px solid var(--rule); background:var(--bg); }
+  .picker { display:flex; align-items:center; gap:8px; margin:0 0 12px; flex-wrap:wrap; }
+  .picker select { width:auto; min-width:190px; padding:5px; }
+  .picker .step { padding:5px 11px; border:1px solid var(--rule); background:var(--bg); cursor:pointer; }
+  .picker .step:disabled { opacity:.4; cursor:default; }
+  .picker .pos { color:var(--muted); font:12px ui-monospace, Menlo, monospace; }
   .slider { margin:10px 0; }
   .slider label { display:flex; justify-content:space-between; gap:8px; font-size:13px; }
   .slider input[type=range] { width:100%; }
@@ -108,7 +117,7 @@ const el = (tag, text, cls) => { const e = document.createElement(tag); if (text
 let schema = null, compiled = null, pollTimer = null, activeTab = "fundamental", runModel = null;
 // Latest run state, plus which results tab is open. Held across renders so a poll tick every second
 // cannot snap the reader back to Picks while a run is still in flight.
-let latest = {claims: [], dossier: null}, resultsTab = "picks";
+let latest = {claims: [], dossier: null}, resultsTab = "picks", selectedStock = null;
 const RESULT_TABS = [["picks", "Picks"], ["why", "Why"],
                      ["fundamental", "Fundamental"], ["technical", "Technical"], ["news", "News"]];
 const MODEL_LABELS = {anthropic: "Anthropic API (real, billed)", offline: "offline model (free, not an LLM)"};
@@ -258,6 +267,56 @@ function poll(runId) {
   pollTimer = setInterval(tick, 1000); tick();
 }
 
+function stockList() {
+  // Dossier order -- picks by score, then avoid -- so stepping through follows the ranking rather
+  // than whatever order the claims happen to be in. Falls back to the ledger mid-run.
+  const d = latest.dossier;
+  if (d) return d.picks.concat(d.avoid).map((p) => p.trading_symbol);
+  return [...new Set((latest.claims || []).map((c) => c.symbol))];
+}
+
+function stockPicker() {
+  // One stock at a time, with prev/next so a reader can walk the shortlist without going back to
+  // a dropdown each time. The choice is module state, so it holds when switching between tabs.
+  const symbols = stockList();
+  if (!symbols.includes(selectedStock)) selectedStock = symbols[0] ?? null;
+  const at = symbols.indexOf(selectedStock);
+  const wrap = el("div", undefined, "picker");
+
+  const prev = el("button", "‹", "step"); prev.disabled = at <= 0;
+  prev.onclick = () => { selectedStock = symbols[at - 1]; renderResults(); };
+  const next = el("button", "›", "step"); next.disabled = at < 0 || at >= symbols.length - 1;
+  next.onclick = () => { selectedStock = symbols[at + 1]; renderResults(); };
+
+  const sel = document.createElement("select");
+  for (const s of symbols) { const o = el("option", s); o.value = s; o.selected = s === selectedStock; sel.append(o); }
+  sel.onchange = () => { selectedStock = sel.value; renderResults(); };
+
+  wrap.append(prev, sel, next, el("span", `${at + 1} of ${symbols.length}`, "pos"));
+  return wrap;
+}
+
+function buildTable(columns, rows) {
+  // columns: [[label, cellClass], ...]. The header carries the same class as its column -- without
+  // that, a right-aligned number column sits under a left-aligned heading and nothing lines up.
+  const table = document.createElement("table");
+  const thead = document.createElement("thead"), htr = document.createElement("tr");
+  for (const [label, cls] of columns) htr.append(el("th", label, cls));
+  thead.append(htr);
+  const tbody = document.createElement("tbody");
+  for (const cells of rows) {
+    const tr = document.createElement("tr");
+    cells.forEach((text, i) => {
+      const extra = cells.classes && cells.classes[i];
+      tr.append(el("td", text, [columns[i][1], extra].filter(Boolean).join(" ")));
+    });
+    tbody.append(tr);
+  }
+  table.append(thead, tbody);
+  const wrap = el("div", undefined, "tscroll"); wrap.append(table);
+  return wrap;
+}
+
 function renderResults() {
   // One tab at a time, so a reader steps through the run instead of scrolling past all of it.
   const d = latest.dossier, claims = latest.claims || [];
@@ -289,70 +348,81 @@ function renderPicks(box, d) {
   if (h.model_client !== "anthropic") box.append(el("p", `Model client: ${h.model_client}.`, "warn"));
   if (h.abstention) box.append(el("p", h.abstention, "warn"));
 
-  const wrap = el("div", undefined, "tscroll");
-  const table = document.createElement("table");
-  const head = document.createElement("tr");
-  for (const c of ["Symbol", "Call", "Score", "Fundamental", "Technical", "News", "Claims"]) head.append(el("th", c));
-  table.append(head);
-  for (const p of d.picks.concat(d.avoid)) {
+  const columns = [["Symbol", "sym"], ["Call", ""], ["Score", "num"], ["Fundamental", "num"],
+                   ["Technical", "num"], ["News", "num"], ["Claims", "num"]];
+  const rows = d.picks.concat(d.avoid).map((p) => {
     const t = p.claim_tallies || {};
     const signed = (k) => (t[k] ? t[k].signed_confidence.toFixed(2) : "—");
-    const tr = document.createElement("tr");
-    tr.append(el("td", p.trading_symbol), el("td", p.recommendation, "rec-" + p.recommendation),
-              el("td", p.score.toFixed(2), "num"), el("td", signed("fundamental"), "num"),
-              el("td", signed("technical"), "num"), el("td", signed("news"), "num"),
-              el("td", String(p.surviving_claims.length), "num"));
-    table.append(tr);
-  }
-  wrap.append(table); box.append(wrap);
+    const cells = [p.trading_symbol, p.recommendation, p.score.toFixed(2), signed("fundamental"),
+                   signed("technical"), signed("news"), String(p.surviving_claims.length)];
+    cells.classes = {1: "rec-" + p.recommendation};  // colour the call, keep the column's alignment
+    return cells;
+  });
+  box.append(buildTable(columns, rows));
   box.append(el("p", h.disclaimer, "muted"));
 }
 
 function renderWhy(box, d) {
   // What the model concluded and why, in its own words -- figure-checked against the cited evidence.
   if (!d) { box.className = "muted"; box.textContent = "No dossier yet."; return; }
-  const entries = d.picks.concat(d.avoid).filter((p) => p.surviving_claims.length);
+  const entries = d.picks.concat(d.avoid);
   if (!entries.some((p) => p.surviving_claims.some((c) => c.justification))) {
     box.append(el("p", "This run predates recorded justifications, so there is no reasoning to show. "
                     + "Claims and falsifiers are in the dimension tabs.", "muted"));
   }
-  for (const p of entries) {
-    const card = el("div", undefined, "why");
-    card.append(el("h3", `${p.trading_symbol} — ${p.recommendation} (score ${p.score.toFixed(2)})`));
-    for (const c of p.surviving_claims) {
-      const claim = el("div", undefined, "claim");
-      claim.append(el("p", `[${c.dimension} · ${c.direction} · ${c.confidence.toFixed(2)}] ${c.statement}`, "said"));
-      if (c.justification) {
-        // A withheld justification is shown as such: the claim stands, its argument did not.
-        const withheld = c.justification.startsWith("(Justification withheld");
-        claim.append(el("p", c.justification, withheld ? "because withheld" : "because"));
-      }
-      claim.append(el("p", "wrong if: " + c.falsifier, "test"));
-      card.append(claim);
+  box.append(stockPicker());
+  const p = entries.find((e) => e.trading_symbol === selectedStock);
+  if (!p) { box.append(el("p", "No stock selected.", "muted")); return; }
+
+  const card = el("div", undefined, "why");
+  card.append(el("h3", `${p.trading_symbol} — ${p.recommendation} (score ${p.score.toFixed(2)})`));
+  if (!p.surviving_claims.length) card.append(el("p", "No claim survived adjudication for this stock.", "muted"));
+  for (const c of p.surviving_claims) {
+    const claim = el("div", undefined, "claim");
+    claim.append(el("p", `[${c.dimension} · ${c.direction} · ${c.confidence.toFixed(2)}] ${c.statement}`, "said"));
+    if (c.justification) {
+      // A withheld justification is shown as such: the claim stands, its argument did not.
+      const withheld = c.justification.startsWith("(Justification withheld");
+      claim.append(el("p", c.justification, withheld ? "because withheld" : "because"));
     }
-    box.append(card);
+    claim.append(el("p", "wrong if: " + c.falsifier, "test"));
+    card.append(claim);
   }
+  box.append(card);
 }
 
 function renderDimension(box, claims, dimension) {
   // Every claim of one dimension with its falsifier and verdict, killed ones struck through.
-  const rows = claims.filter((c) => c.dimension === dimension);
+  let rows = claims.filter((c) => c.dimension === dimension);
   if (!rows.length) { box.className = "muted"; box.textContent = `No ${dimension} claims in this run.`; return; }
-  const wrap = el("div", undefined, "tscroll");
-  const table = document.createElement("table");
-  const head = document.createElement("tr");
-  for (const c of ["Symbol", "Dir", "Conf", "Claim", "Falsifier", "Verdict"]) head.append(el("th", c));
-  table.append(head);
-  for (const r of rows) {
-    const dead = !["survived", "pending"].includes(r.verdict);
-    const tr = document.createElement("tr");
-    tr.append(el("td", r.symbol), el("td", r.direction),
-              el("td", r.confidence === undefined ? "—" : Number(r.confidence).toFixed(2), "num"),
-              el("td", r.statement, dead ? "dead" : ""), el("td", r.falsifier),
-              el("td", r.verdict + (r.reason ? " — " + r.reason : ""), "verdict-" + r.verdict));
-    table.append(tr);
+
+  // Fundamental and technical run to dozens of rows across the shortlist, so they are read one
+  // stock at a time. News is a handful of rows and reads better whole.
+  const perStock = dimension !== "news";
+  if (perStock) {
+    box.append(stockPicker());
+    rows = rows.filter((r) => r.symbol === selectedStock);
+    if (!rows.length) {
+      box.append(el("p", `No ${dimension} claims for ${selectedStock}.`, "muted"));
+      return;
+    }
   }
-  wrap.append(table); box.append(wrap);
+
+  // With one stock in view the symbol column repeats itself; drop it and give the width to the text.
+  const columns = perStock
+    ? [["Dir", ""], ["Conf", "num"], ["Claim", ""], ["Falsifier", "fals"], ["Verdict", ""]]
+    : [["Symbol", "sym"], ["Dir", ""], ["Conf", "num"], ["Claim", ""], ["Falsifier", "fals"], ["Verdict", ""]];
+  box.append(buildTable(columns, rows.map((r) => {
+    const dead = !["survived", "pending"].includes(r.verdict);
+    const conf = r.confidence === undefined || r.confidence === null ? "—" : Number(r.confidence).toFixed(2);
+    const verdict = r.verdict + (r.reason ? " — " + r.reason : "");
+    const cells = perStock
+      ? [r.direction, conf, r.statement, r.falsifier, verdict]
+      : [r.symbol, r.direction, conf, r.statement, r.falsifier, verdict];
+    const claimAt = perStock ? 2 : 3, verdictAt = perStock ? 4 : 5;
+    cells.classes = {[claimAt]: dead ? "dead" : "", [verdictAt]: "verdict-" + r.verdict};
+    return cells;
+  })));
 }
 
 async function init() {
