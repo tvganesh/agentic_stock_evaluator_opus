@@ -76,10 +76,12 @@ def _gateway(client: FakeClient, candidates: int = 2, in_model_phase: bool = Tru
 def test_committed_total_is_the_hard_stop():
     """Committed equals the sum of per-call bounds times calls, and equals the hard stop."""
     plan = _plan(10)
-    assert [r.calls for r in plan.rows] == [10, 10, 10, 3]
+    # three analysts per candidate, two prepaid probes per candidate, one veto per four candidates
+    assert [r.calls for r in plan.rows] == [10, 10, 10, 20, 3]
     assert plan.committed_total_microusd == sum(r.calls * r.per_call_bound_microusd for r in plan.rows)
     assert plan.hard_stop_microusd == plan.committed_total_microusd
     assert call_bound_microusd("claude-sonnet-5", 11_000, 4_000) == 11_000 * 2 + 4_000 * 10
+    assert call_bound_microusd("qwen3:8b", 24_000, 4_000) == 0, "a locally served model costs nothing"
 
 
 def test_plan_hash_binds_inputs_not_compile_time():
@@ -137,7 +139,7 @@ def test_haiku_slots_get_no_thinking_or_effort():
 
 def test_oversize_prompt_is_never_dispatched():
     """A prompt above max_in raises PromptOverBudget before the model is called."""
-    client = FakeClient(counted=11_001)
+    client = FakeClient(counted=24_001)  # one token past the fundamental slot's allowance
     gateway, ledger, _ = _gateway(client)
     with pytest.raises(PromptOverBudget):
         gateway.call(ledger.acquire(SlotClass.DEEP_FUNDAMENTAL), system="s", user="u",
@@ -168,6 +170,28 @@ def test_unknown_usage_settles_at_the_bound_and_overruns_are_violations():
     with pytest.raises(SpendViolation):
         gateway.call(ledger.acquire(SlotClass.DEEP_FUNDAMENTAL), system="s", user="u",
                      output_type=ClaimBatch, purpose={})
+
+
+def test_degraded_calls_are_surfaced_and_clean_ones_are_not():
+    """A call that failed must reach the operator; an empty answer from a healthy call must not.
+
+    Regression for the local runs of 17 Sep 2026: a truncated veto prompt produced an empty
+    refutation list that read in the dossier as an auditor finding nothing to object to.
+    """
+    client = FakeClient(result=ModelResult(None, "context_truncated", 2050, 0,
+                                           detail="server evaluated 2050 prompt tokens of ~6290 sent"))
+    gateway, ledger, _ = _gateway(client)
+    assert gateway.call(ledger.acquire(SlotClass.VETO), system="s", user="u",
+                        output_type=ClaimBatch, purpose={"agent": "veto"}) is None
+    notes = gateway.drain_degraded()
+    assert len(notes) == 1 and "veto" in notes[0] and "context_truncated" in notes[0]
+    assert "6290" in notes[0], "the note carries the detail that explains the failure"
+    assert gateway.drain_degraded() == [], "draining twice must not repeat a note"
+
+    healthy, ledger2, _ = _gateway(FakeClient())  # end_turn with an empty batch is a real finding
+    healthy.call(ledger2.acquire(SlotClass.DEEP_NEWS), system="s", user="u",
+                 output_type=ClaimBatch, purpose={"agent": "claim.news"})
+    assert healthy.drain_degraded() == []
 
 
 def test_model_request_surface_has_no_tools():

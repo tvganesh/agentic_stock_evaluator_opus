@@ -1,0 +1,577 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>How Sealed Window Picks Stocks</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@500;600;700&family=JetBrains+Mono:wght@400;500&family=Spectral:ital,wght@0,400;0,600;1,400&display=swap">
+<style>
+:root{
+  --paper:#eef1ec; --surface:#f9faf7; --surface-2:#e4e9df;
+  --ink:#141a16; --ink-2:#39423b; --muted:#6c756b;
+  --rule:#d1d7cb; --rule-strong:#aeb6a7;
+  --accent:#14605b; --accent-soft:#d8e7e3;
+  --good:#2f6b46; --good-soft:#dbe9df;
+  --bad:#9a3122; --bad-soft:#f3e2de;
+  --live:#8a4a12; --live-soft:#f4e8d6;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --paper:#0d1211; --surface:#161b19; --surface-2:#1e2422;
+    --ink:#e2e8e3; --ink-2:#b3bcb5; --muted:#818b82;
+    --rule:#27302c; --rule-strong:#3a443f;
+    --accent:#5fb8ae; --accent-soft:#152825;
+    --good:#78c795; --good-soft:#15251b;
+    --bad:#e08575; --bad-soft:#2c1a17;
+    --live:#d9a45f; --live-soft:#2a2014;
+  }
+}
+:root[data-theme="dark"]{
+  --paper:#0d1211; --surface:#161b19; --surface-2:#1e2422;
+  --ink:#e2e8e3; --ink-2:#b3bcb5; --muted:#818b82;
+  --rule:#27302c; --rule-strong:#3a443f;
+  --accent:#5fb8ae; --accent-soft:#152825;
+  --good:#78c795; --good-soft:#15251b;
+  --bad:#e08575; --bad-soft:#2c1a17;
+  --live:#d9a45f; --live-soft:#2a2014;
+}
+*{box-sizing:border-box}
+body{
+  margin:0; background:var(--paper); color:var(--ink);
+  font-family:Spectral,Georgia,"Times New Roman",serif; font-size:17px; line-height:1.68;
+  padding-inline:20px; padding-block:0 72px; -webkit-font-smoothing:antialiased;
+}
+img{max-width:100%}
+[hidden]:not([hidden=until-found i]){display:none!important}
+.wrap{max-width:900px; margin-inline:auto}
+h1,h2,h3,h4,.ui{font-family:"IBM Plex Sans Condensed","Helvetica Neue",Arial,sans-serif}
+h2,h3{text-wrap:balance}
+p{margin:0 0 1em; max-width:68ch}
+ul,ol{margin:0 0 1.15em; padding-left:1.2em; max-width:68ch}
+li{margin-bottom:.5em}
+li::marker{color:var(--accent)}
+strong{font-weight:600}
+code,.mono{font-family:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,monospace}
+code{font-size:.8em; background:var(--surface-2); padding:.12em .36em; border:1px solid var(--rule)}
+
+header.mast{padding-block:54px 22px; border-bottom:1px solid var(--rule-strong)}
+.eyebrow{font-family:"IBM Plex Sans Condensed",sans-serif; font-size:12px; font-weight:600;
+  letter-spacing:.2em; text-transform:uppercase; color:var(--accent); margin-bottom:16px}
+h1{font-size:clamp(34px,6.5vw,60px); font-weight:700; line-height:1.02; letter-spacing:-.01em;
+  margin:0 0 16px; text-transform:uppercase}
+h1 .l2{display:block; color:var(--muted); font-weight:500}
+.standfirst{font-size:1.15em; color:var(--ink-2); max-width:60ch; margin:0 0 22px}
+.metastrip{display:flex; flex-wrap:wrap; gap:6px 26px; font-family:"JetBrains Mono",monospace;
+  font-size:11.5px; color:var(--muted)}
+.metastrip b{font-weight:500; color:var(--ink-2)}
+
+h2{font-size:clamp(23px,3.4vw,31px); font-weight:600; letter-spacing:-.015em; line-height:1.15; margin:0 0 .5em}
+h3{font-size:17.5px; font-weight:600; margin:2em 0 .5em}
+h4{font-size:14px; font-weight:700; letter-spacing:.1em; text-transform:uppercase; color:var(--muted); margin:1.6em 0 .6em}
+section{margin-top:46px}
+.sectionhead{display:flex; align-items:baseline; gap:14px; border-top:2px solid var(--ink); padding-top:12px; margin-bottom:18px}
+.sectionhead .num{font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--muted)}
+
+.pull{border-left:3px solid var(--accent); background:var(--surface); padding:16px 20px; margin:0 0 1.3em}
+.pull p:last-child{margin-bottom:0}
+.note{background:var(--surface); border:1px solid var(--rule); padding:15px 18px; margin:.4em 0 1.3em; font-size:.95em; color:var(--ink-2)}
+.note p:last-child{margin-bottom:0}
+.note.warn{border-left:3px solid var(--bad)}
+
+/* phase rail */
+.phase{display:grid; grid-template-columns:52px 1fr; gap:0 18px; padding:18px 0; border-top:1px solid var(--rule)}
+.phase:last-of-type{border-bottom:1px solid var(--rule)}
+.phase .pn{font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--accent); padding-top:4px}
+.phase h3{margin:0 0 .35em; font-size:19px}
+.phase .state{display:flex; flex-wrap:wrap; gap:6px; margin:0 0 .7em}
+.tag{font-family:"JetBrains Mono",monospace; font-size:10.5px; padding:2px 8px; border:1px solid transparent; white-space:nowrap}
+.tag.off{background:var(--surface-2); color:var(--muted); border-color:var(--rule)}
+.tag.sealed{background:var(--accent-soft); color:var(--accent); border-color:var(--accent)}
+.tag.live{background:var(--live-soft); color:var(--live); border-color:var(--live)}
+.phase p:last-child{margin-bottom:0}
+@media (max-width:560px){.phase{grid-template-columns:1fr; gap:6px}}
+
+.tscroll{overflow-x:auto; margin:0 0 1.4em; border:1px solid var(--rule); background:var(--surface)}
+table{border-collapse:collapse; width:100%; font-size:14.5px; min-width:480px; font-variant-numeric:tabular-nums}
+thead th{font-family:"IBM Plex Sans Condensed",sans-serif; font-size:11px; font-weight:600; letter-spacing:.13em;
+  text-transform:uppercase; color:var(--accent); text-align:left; padding:10px 15px;
+  border-bottom:1px solid var(--rule-strong); white-space:nowrap}
+td{padding:10px 15px; border-bottom:1px solid var(--rule); vertical-align:top; color:var(--ink-2)}
+tbody tr:last-child td{border-bottom:0}
+td.k{color:var(--ink); font-weight:600; font-family:"IBM Plex Sans Condensed",sans-serif; white-space:nowrap}
+td .mono{font-size:12.5px}
+.num{text-align:right; font-family:"JetBrains Mono",monospace; font-size:13px}
+
+figure{margin:0 0 1.6em}
+.figbox{background:var(--surface); border:1px solid var(--rule); padding:20px 16px; overflow-x:auto}
+figcaption{font-family:"IBM Plex Sans Condensed",sans-serif; font-size:12.5px; color:var(--muted); margin-top:10px; max-width:68ch}
+svg.fig{display:block; width:100%; min-width:520px; max-width:760px; margin-inline:auto; height:auto}
+.s-line{stroke:currentColor; stroke-width:1.6; fill:none}
+.s-rule{stroke:var(--rule-strong); stroke-width:1; stroke-dasharray:2 4}
+.s-axis{stroke:var(--rule-strong); stroke-width:1}
+.t-row{fill:var(--ink); font-family:"IBM Plex Sans Condensed",sans-serif; font-size:11.5px; font-weight:700; letter-spacing:.12em; text-anchor:end}
+.t-small{fill:var(--muted); font-family:"JetBrains Mono",monospace; font-size:10px; text-anchor:middle}
+.t-ph{fill:var(--ink); font-family:"IBM Plex Sans Condensed",sans-serif; font-size:11.5px; font-weight:700; text-anchor:middle}
+.t-node{fill:var(--ink); font-family:"IBM Plex Sans Condensed",sans-serif; font-size:12px; font-weight:600; text-anchor:middle}
+.t-edge{fill:var(--muted); font-family:"JetBrains Mono",monospace; font-size:10px}
+.box{fill:var(--surface-2); stroke:var(--rule-strong); stroke-width:1}
+.box-good{fill:var(--good-soft); stroke:var(--good); stroke-width:1.4}
+.box-bad{fill:var(--bad-soft); stroke:var(--bad); stroke-width:1.4}
+.live-stroke{stroke:var(--live)} .accent-stroke{stroke:var(--accent)}
+.t-live{fill:var(--live)} .t-good{fill:var(--good)} .t-bad{fill:var(--bad)}
+
+.claimcard{border:1px solid var(--rule); background:var(--surface); padding:14px 16px; margin:0 0 12px}
+.claimcard .meta{font-family:"JetBrains Mono",monospace; font-size:10.5px; color:var(--muted); margin-bottom:6px}
+.claimcard .said{margin:0 0 8px}
+.claimcard .test{font-family:"JetBrains Mono",monospace; font-size:12px; color:var(--ink-2)}
+.verdict{display:inline-block; font-family:"JetBrains Mono",monospace; font-size:10.5px; padding:1px 7px; border:1px solid}
+.verdict.kept{color:var(--good); border-color:var(--good); background:var(--good-soft)}
+.verdict.killed{color:var(--bad); border-color:var(--bad); background:var(--bad-soft)}
+
+.grid2{display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:1px; background:var(--rule);
+  border:1px solid var(--rule); margin:0 0 1.4em}
+.grid2 > div{background:var(--surface); padding:15px 17px}
+.grid2 h4{margin-top:0}
+.grid2 p:last-child{margin-bottom:0}
+
+.funnel{display:flex; flex-wrap:wrap; gap:10px; margin:0 0 1.4em}
+.step{flex:1 1 130px; background:var(--surface); border:1px solid var(--rule); padding:12px 14px}
+.step .n{font-family:"JetBrains Mono",monospace; font-size:21px; color:var(--accent); display:block}
+.step .l{font-family:"IBM Plex Sans Condensed",sans-serif; font-size:12px; text-transform:uppercase; letter-spacing:.08em; color:var(--muted)}
+
+footer{margin-top:52px; padding-top:18px; border-top:2px solid var(--ink);
+  font-family:"JetBrains Mono",monospace; font-size:11px; color:var(--muted); display:flex; flex-wrap:wrap; gap:8px 26px}
+@media (prefers-reduced-motion:reduce){*{animation:none!important; transition:none!important}}
+:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+</style>
+</head>
+<body>
+
+<div class="wrap">
+
+<header class="mast">
+  <div class="eyebrow">A plain-language guide</div>
+  <h1>How Sealed Window<span class="l2">picks stocks</span></h1>
+  <p class="standfirst">A research system that reads Indian stock-market data, asks an AI model to argue about it, then throws away every argument that the numbers contradict. It recommends; it cannot trade.</p>
+  <div class="metastrip">
+    <div><b>Market</b> NSE equities (Nifty 500)</div>
+    <div><b>Data</b> Upstox, read-only</div>
+    <div><b>Models</b> Claude Sonnet 5 &amp; Haiku 4.5, or a local model</div>
+    <div><b>Last run</b> 16 Sep 2026 · 10 picks · $1.68</div>
+  </div>
+</header>
+
+<section>
+  <div class="sectionhead"><span class="num">01</span><h2>The problem this design is built around</h2></div>
+  <p>An AI model asked "is this a good stock?" will always answer. It will sound confident, cite numbers that may or may not be real, and give you no way to tell a solid argument from a plausible-sounding one. Worse, the model reads news articles — and a news article is text written by a stranger, which may be trying to manipulate whoever reads it.</p>
+  <p>So this system never asks a model for a verdict. It asks for <strong>claims that can be proven wrong</strong>, then checks each one against the data by machine. The model's job is to notice things worth arguing about. The machine's job is to kill the arguments that don't hold.</p>
+  <div class="pull">
+    <p>Three rules shape everything: the model never touches the internet, every claim must come with the condition that would disprove it, and the entire bill is agreed before the first question is asked.</p>
+  </div>
+</section>
+
+<section>
+  <div class="sectionhead"><span class="num">02</span><h2>Rule one: the model works offline</h2></div>
+  <p>Market data is downloaded first, saved to disk, and locked. Only then does any AI model start work — and by that point the program has no route to the market data provider at all. The two never overlap.</p>
+  <figure>
+    <div class="figbox">
+      <svg class="fig" viewBox="0 0 720 220" role="img" aria-label="Timing diagram: the market-data connection is live only during phase 1, acquire, then closed for phases 2 to 6. The AI model runs only in phase 3, claim, and phase 5, veto. The two are never active at the same time.">
+        <line class="s-rule" x1="200" y1="28" x2="200" y2="168"></line>
+        <line class="s-rule" x1="300" y1="28" x2="300" y2="168"></line>
+        <line class="s-rule" x1="400" y1="28" x2="400" y2="168"></line>
+        <line class="s-rule" x1="500" y1="28" x2="500" y2="168"></line>
+        <line class="s-rule" x1="600" y1="28" x2="600" y2="168"></line>
+        <line class="s-axis" x1="110" y1="168" x2="700" y2="168"></line>
+
+        <text class="t-row" x="100" y="58">MARKET DATA</text>
+        <path class="s-line live-stroke" d="M110,44 L200,44 L200,80 L700,80"></path>
+        <text class="t-small t-live" x="155" y="36">connected</text>
+        <text class="t-small" x="270" y="72">closed — for the rest of the run</text>
+
+        <text class="t-row" x="100" y="132">AI MODEL</text>
+        <path class="s-line accent-stroke" d="M110,148 L300,148 L300,112 L400,112 L400,148 L500,148 L500,112 L600,112 L600,148 L700,148"></path>
+        <text class="t-small" x="200" y="142">idle</text>
+        <text class="t-small" x="350" y="104">thinking</text>
+        <text class="t-small" x="450" y="142">idle</text>
+        <text class="t-small" x="550" y="104">thinking</text>
+        <text class="t-small" x="650" y="142">idle</text>
+
+        <text class="t-ph" x="155" y="190">1 · Collect</text>
+        <text class="t-ph" x="250" y="190">2 · Filter</text>
+        <text class="t-ph" x="350" y="190">3 · Claim</text>
+        <text class="t-ph" x="450" y="190">4 · Check</text>
+        <text class="t-ph" x="550" y="190">5 · Attack</text>
+        <text class="t-ph" x="650" y="190">6 · Publish</text>
+        <text class="t-small" x="155" y="206">no model</text>
+        <text class="t-small" x="250" y="206">no model</text>
+        <text class="t-small" x="350" y="206">models</text>
+        <text class="t-small" x="450" y="206">no model</text>
+        <text class="t-small" x="550" y="206">auditor</text>
+        <text class="t-small" x="650" y="206">no model</text>
+      </svg>
+    </div>
+    <figcaption>The connection to the market data provider is open only while collecting. From then on the analysis runs against a frozen copy, so nothing a model does can reach back out to the market, and nothing can change under it mid-analysis.</figcaption>
+  </figure>
+  <p>This holds whichever model you use. With Claude, the one address reachable while a model runs is the Anthropic API; with a model served on your own machine it is <code>127.0.0.1</code>. Neither window can be opened while the market-data connection is live, and the market-data connection cannot be reopened once closed.</p>
+  <p>Why it matters: if a news article inside the data tried to trick the model into leaking something or fetching something, there is nowhere to send it and nothing to fetch. The worst it can achieve is a false claim, and false claims are what the next rule is for.</p>
+
+  <h3>What the system is allowed to touch</h3>
+  <p>The download step may call exactly <strong>seven</strong> addresses at the data provider, all read-only: the list of listed companies, daily prices, today's price, three financial-statement endpoints, and company news. Everything else — orders, holdings, account balance, trading history — is absent from the code. Not blocked by a setting; simply never written.</p>
+  <div class="note">
+    <p><strong>A real trap this caught.</strong> The provider recently allowed the same read-only key to reach account data such as holdings and positions. The news endpoint also accepts a setting that returns "news about your portfolio". Both are refused here, because the permitted web addresses and their settings are pinned in a list the code checks before every request, and the test suite tries every forbidden one to prove it fails.</p>
+  </div>
+</section>
+
+<section>
+  <div class="sectionhead"><span class="num">03</span><h2>Rule two: every claim carries its own disproof</h2></div>
+  <p>This is the heart of the design, and it is simpler than it sounds. When the model says something, it must also say what would make that statement false — written as a short formula the computer can evaluate against the saved data.</p>
+  <div class="claimcard">
+    <div class="meta">fundamental · supports owning · confidence 0.85 · HBL Engineering</div>
+    <p class="said">"ROCE stands at 47.79% versus a sector benchmark of 14.99%, and ROE is 36.8% versus sector 13.06%, indicating exceptional capital efficiency relative to peers."</p>
+    <div class="test">wrong if: <code>roce_pct &lt; sector_roce_pct + 5</code> &nbsp; → &nbsp; 47.79 is not below 19.99 &nbsp; <span class="verdict kept">kept</span></div>
+  </div>
+  <p>The computer reads the formula, plugs in the saved numbers, and gets a straight yes or no. "The condition came true" means the claim is wrong, and it is deleted — not softened, not down-weighted. Nothing about the model's tone or confidence can save it.</p>
+
+  <h4>Four ways a claim dies</h4>
+  <figure>
+    <div class="figbox">
+      <svg class="fig" viewBox="0 0 720 260" role="img" aria-label="Flow of one claim: after checks for real evidence and quoted figures, its disproof condition is evaluated. If the condition is true the claim is refuted. If it cannot be evaluated, or could never be true, the claim is also discarded. Survivors face the auditor, and only claims that survive an attack are counted in the score.">
+        <rect class="box" x="8" y="104" width="104" height="44"></rect>
+        <text class="t-node" x="60" y="123">Claim from</text>
+        <text class="t-node" x="60" y="139">the model</text>
+
+        <line class="s-line" x1="112" y1="126" x2="166" y2="126" marker-end="url(#ar)"></line>
+        <text class="t-edge" x="116" y="118">checks</text>
+
+        <rect class="box" x="168" y="96" width="112" height="60"></rect>
+        <text class="t-node" x="224" y="119">Evidence real?</text>
+        <text class="t-node" x="224" y="137">Figures quoted?</text>
+
+        <line class="s-line" x1="280" y1="126" x2="336" y2="126" marker-end="url(#ar)"></line>
+        <rect class="box" x="338" y="96" width="120" height="60"></rect>
+        <text class="t-node" x="398" y="119">Is the disproof</text>
+        <text class="t-node" x="398" y="137">condition true?</text>
+
+        <path class="s-line" d="M398,96 L398,54 L556,54" marker-end="url(#ar)"></path>
+        <text class="t-edge" x="420" y="46">yes → the claim is wrong</text>
+        <rect class="box-bad" x="558" y="34" width="120" height="40"></rect>
+        <text class="t-node t-bad" x="618" y="59">Refuted</text>
+
+        <path class="s-line" d="M398,156 L398,206 L556,206" marker-end="url(#ar)"></path>
+        <text class="t-edge" x="404" y="200">could never be true, or cannot be checked</text>
+        <rect class="box-bad" x="558" y="186" width="120" height="40"></rect>
+        <text class="t-node t-bad" x="618" y="211">Discarded</text>
+
+        <line class="s-line" x1="458" y1="126" x2="556" y2="126" marker-end="url(#ar)"></line>
+        <text class="t-edge" x="470" y="118">no → kept</text>
+        <rect class="box-good" x="558" y="106" width="120" height="40"></rect>
+        <text class="t-node t-good" x="618" y="131">Survives</text>
+
+        <path class="s-line" d="M224,156 L224,232 L556,232" marker-end="url(#ar)"></path>
+        <text class="t-edge" x="232" y="226">invented figure or wrong company → rejected</text>
+
+        <defs>
+          <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <polygon points="0,0 10,5 0,10" fill="currentColor"></polygon>
+          </marker>
+        </defs>
+      </svg>
+    </div>
+    <figcaption>Every claim runs this gauntlet before it can count toward a recommendation. In the 16 September run, 289 claims went in and 243 came out.</figcaption>
+  </figure>
+  <div class="tscroll">
+    <table>
+      <thead><tr><th>Outcome</th><th>What happened</th><th>Real example</th></tr></thead>
+      <tbody>
+        <tr><td class="k">Refuted</td><td>The disproof condition turned out to be true.</td><td>A claim that leverage was falling, where the figure had risen.</td></tr>
+        <tr><td class="k">Rejected</td><td>It cited evidence about a different company, or quoted a figure that appears nowhere in the data.</td><td>41 claims, mostly news claims citing only price evidence.</td></tr>
+        <tr><td class="k">Unusable</td><td>The figure needed is missing, or older than the freshness limit — 5 days for prices, 400 days for financial statements.</td><td>Stocks whose last published accounts date from 2010.</td></tr>
+        <tr><td class="k">Unkillable</td><td>The condition could never be true for <em>any</em> company in the market, so the claim could never fail. Discarded.</td><td>"ROE 45.69% beats the sector's −2.52%", disproved only if ROE fell below −2.52%, which no company in the index reaches.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>That last one deserves attention. It is the loophole an AI would find on its own — write a test you can't fail — and the check for it compares the threshold against the spread of every company in the index.</p>
+  <div class="note warn">
+    <p><strong>That check had a known limit</strong>, found by running the system against a local model and since closed. It asked <em>"could this condition fire for some company?"</em> — not <em>"could it fire for <strong>this</strong> company?"</em> A test like <code>rsi_14 &gt; 34.661507</code>, written for a company whose RSI is exactly 34.661507, passed the check (plenty of companies sit above that level) while being impossible to fail for the one company it describes. In one run, <strong>12 of 26 surviving claims</strong> did exactly this.</p>
+    <p>The adjudicator now discards a threshold copied from the subject's own row: a strict comparison whose number matches that company's measured value to more than two decimal places is a tautology, not a test. Replaying that run through the fixed check kills exactly those 12 and leaves the other 14 standing — including <code>news_count_7d &gt; 0</code> against a count of zero, which is zero-margin but entirely legitimate, because zero is a natural boundary rather than a reading copied off the page. Precision, not margin, is what separates the two.</p>
+  </div>
+
+  <h3>Worked examples: how a claim lives or dies</h3>
+  <div class="pull">
+    <p><strong>The falsifier is the condition that would make the statement false.</strong> If that condition turns out to be true, the claim dies. If it is false, the claim lives. "The falsifier fired" is bad news for the claim.</p>
+  </div>
+  <p>That reads backwards to most people, so here are five real cases from actual runs.</p>
+
+  <h4>1 · A correct claim that survives</h4>
+  <div class="claimcard">
+    <p class="said">"ROCE is comfortably above the sector benchmark"</p>
+    <div class="test">wrong if: <code>roce_pct &lt; sector_roce_pct</code><br>
+      values: roce_pct = <strong>67.99</strong>, sector_roce_pct = <strong>19.68</strong><br>
+      the machine asks: is 67.99 &lt; 19.68? → <strong>No</strong> &nbsp; <span class="verdict kept">survived</span></div>
+  </div>
+  <p>Read the falsifier aloud: <em>"I would be wrong if ROCE were below the sector."</em> It isn't, so the claim stands. This is what a well-formed claim looks like.</p>
+
+  <h4>2 · A wrong claim, correctly refuted</h4>
+  <div class="claimcard">
+    <p class="said">"The company is old for its fundamentals, with a history dating back to before 2024"</p>
+    <div class="test">wrong if: <code>fundamentals_age_days &lt; 2024</code><br>
+      value: fundamentals_age_days = <strong>79</strong><br>
+      the machine asks: is 79 &lt; 2024? → <strong>Yes</strong> &nbsp; <span class="verdict killed">refuted</span></div>
+  </div>
+  <p>The model read a column counted in <em>days</em> as though it were a <em>year</em>. The claim is nonsense, its own test fires, and it is deleted. Nothing was special-cased to catch this — the arithmetic did it.</p>
+
+  <h4>3 · The direction trap, first form: a true claim killed</h4>
+  <div class="claimcard">
+    <p class="said">"The earnings yield (1/pe) is less than the sector benchmark"</p>
+    <div class="test">wrong if: <code>pe &gt; sector_pe</code><br>
+      values: pe = <strong>34.38</strong>, sector_pe = <strong>20.58</strong><br>
+      the machine asks: is 34.38 &gt; 20.58? → <strong>Yes</strong> &nbsp; <span class="verdict killed">refuted</span></div>
+  </div>
+  <p>But look: earnings yield is 1/pe, so 1/34.38 = 0.029 against the sector's 1/20.58 = 0.049. The statement was <strong>true</strong>. It was destroyed because the falsifier restated the claim instead of negating it. Written correctly as <code>pe &lt;= sector_pe</code> — <em>"I'd be wrong if P/E were at or below sector"</em> — it would have survived.</p>
+
+  <h4>4 · The direction trap, second form: a false claim kept</h4>
+  <div class="claimcard">
+    <p class="said">"The operating margin has <strong>improved</strong> in the last year"</p>
+    <div class="test">wrong if: <code>operating_margin_delta_1y_pp &gt;= 0</code><br>
+      value: <strong>−1.621612</strong> — the margin <em>declined</em><br>
+      the machine asks: is −1.62 ≥ 0? → <strong>No</strong> &nbsp; <span class="verdict kept">survived</span> at confidence 0.95</div>
+  </div>
+  <p>This is the serious one. The statement is false, and it survived — because the falsifier only fires when the claim is <em>true</em>. Written correctly as <code>operating_margin_delta_1y_pp &lt;= 0</code>: is −1.62 ≤ 0? Yes → fires → refuted, which is the right answer.</p>
+
+  <h4>5 · A test that cannot fail</h4>
+  <div class="claimcard">
+    <p class="said">"The stock is in a bearish state as per the RSI indicator"</p>
+    <div class="test">wrong if: <code>rsi_14 &gt; 34.661507</code><br>
+      value: rsi_14 = <strong>34.661507</strong> — exactly the threshold<br>
+      the machine asks: is 34.661507 &gt; 34.661507? → <strong>No</strong>, by exactly zero &nbsp; <span class="verdict kept">survived</span></div>
+  </div>
+  <p>The model set its own passing grade at precisely the mark it had already achieved.</p>
+
+  <h3>The test you can apply yourself</h3>
+  <p>For any claim, ask one question: <strong>if this falsifier were true, would the sentence be wrong?</strong></p>
+  <div class="tscroll">
+    <table>
+      <thead><tr><th>Statement</th><th>Falsifier</th><th>If it fires, is the sentence wrong?</th><th></th></tr></thead>
+      <tbody>
+        <tr><td class="k">ROCE above sector</td><td><code>roce_pct &lt; sector_roce_pct</code></td><td>Yes — ROCE below sector</td><td>✅</td></tr>
+        <tr><td class="k">P/B above sector</td><td><code>pb &gt; sector_pb</code></td><td>No — that is the claim restated</td><td>❌</td></tr>
+        <tr><td class="k">Margin improved</td><td><code>operating_margin_delta_1y_pp &gt;= 0</code></td><td>No — that <em>is</em> improvement</td><td>❌</td></tr>
+        <tr><td class="k">Margin improved</td><td><code>operating_margin_delta_1y_pp &lt;= 0</code></td><td>Yes — that is decline</td><td>✅</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>If the answer is "no", the falsifier points the wrong way — and the system will publish the claim anyway. <strong>There is no machine check for this.</strong> The predicate is well-formed, evaluable and reachable; only the relationship between the sentence and its test is broken, and nothing in the pipeline verifies that relationship. It is the single largest gap in the method, and it is why every claim is printed beside its test: so a reader can apply the question above.</p>
+</section>
+
+<section>
+  <div class="sectionhead"><span class="num">04</span><h2>The six steps, in order</h2></div>
+
+  <div class="phase">
+    <div class="pn">01</div>
+    <div>
+      <h3>Collect and freeze</h3>
+      <div class="state"><span class="tag live">market data: connected</span><span class="tag off">model: idle</span></div>
+      <p>For each of the ~500 companies: ten years of daily prices, six headline ratios, the last four years and four quarters of results, the balance sheet, and recent news. That is about 3,000 requests, paced to stay inside the provider's limits, and takes roughly 40 minutes.</p>
+      <p>The result is written once, made read-only, and fingerprinted. Any later change to a single digit makes the fingerprint fail, and the analysis refuses to run. Every individual fact gets its own reference number like <code class="mono">ev:349d5c0c29b42bbb</code>, which is the only way anything later is allowed to refer to it.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="pn">02</div>
+    <div>
+      <h3>Filter down to a shortlist</h3>
+      <div class="state"><span class="tag sealed">market data: closed</span><span class="tag off">model: idle</span></div>
+      <p>Plain arithmetic, no AI: from ~500 companies down to about 170 that meet your thresholds, then the top 20 by return on capital. These are the sliders you set — profitability, growth, valuation, price behaviour — and they are compared against the saved numbers directly.</p>
+      <p>Two deliberate refusals here: a company missing a required number is <em>rejected</em>, never given the benefit of the doubt; and a company whose accounts are too old to trust is rejected even if every other number looks perfect.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="pn">03</div>
+    <div>
+      <h3>Ask for arguments</h3>
+      <div class="state"><span class="tag sealed">market data: closed</span><span class="tag live">model: thinking</span></div>
+      <p>Each of the 20 companies gets three separate questions, asked independently, each seeing only its own slice of data: one about the business (Claude Sonnet 5), one about the price chart (Sonnet 5), one about the news (the cheaper Haiku 4.5). Each returns at most six claims, each with evidence references, a confidence between 0.05 and 0.95, and its disproof condition.</p>
+      <p>Before committing, an analyst may ask for more of the frozen data — deeper price history, the full statement tables, how the company ranks against its peers, or further news pages. These four probes (<code>price_history</code>, <code>statement_detail</code>, <code>peer_comparison</code>, <code>news_articles</code>) read the sealed copy on disk, so curiosity costs tokens but opens no network. Each analyst is bound to one company and draws on a prepaid pool of probes, and every probe is recorded.</p>
+      <p>What the models still cannot do: reach the internet, read your files, run code, or call each other. Peer comparison returns a rank and a percentile, never another company's identity. News text is wrapped and labelled as data, with a note that nothing inside it is an instruction.</p>
+      <div class="note">
+        <p><strong>Running it on your own machine.</strong> The same six phases can be driven by a local model instead of Claude — llama3.2 or qwen3, served on the loopback interface. A local run commits <strong>$0.00</strong> and the plan names the model it will actually call. The seal narrows rather than widens: during a local model call the only reachable address is <code>127.0.0.1</code>, so an injected instruction still has nowhere to send anything. It is slower by a wide margin — on an Intel i9 with no GPU, generation runs at single-digit tokens per second, making a 20-company run an overnight job — and a small local model produces noticeably weaker claims than Sonnet. It exists so the method can be exercised without spending.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="pn">04</div>
+    <div>
+      <h3>Check every argument</h3>
+      <div class="state"><span class="tag sealed">market data: closed</span><span class="tag off">model: idle</span></div>
+      <p>The gauntlet from the previous section, run by plain code. Survivors are then scored by simple addition: each surviving claim contributes its confidence, positive claims adding and negative claims subtracting, weighted by subject — business 1.0, price chart 0.8, news 0.5.</p>
+      <p>News counts least on purpose: it is the one input written by strangers.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="pn">05</div>
+    <div>
+      <h3>Let an auditor attack</h3>
+      <div class="state"><span class="tag sealed">market data: closed</span><span class="tag live">model: thinking</span></div>
+      <p>A second model sees the surviving claims and the underlying evidence — but not the reasoning that produced them, so it cannot be led. It has exactly one power: to argue that a claim is wrong. There is no field in its answer for agreement, so "looks fine to me" is not an available response.</p>
+      <p>Its attacks face the same machine check. In the 16 September run it killed two claims, including one arguing a stock's year-long gain proved an intact uptrend — refuted by pointing out the stock trades below its 200-day average.</p>
+      <p>An attack must also <em>be</em> an attack. A refutation that reuses its target's own falsifier is rejected outright: the claim survived precisely because that condition is false, so an identical condition in the refutation is false too, and the attack would "stand" without ever asserting anything — deleting a claim the auditor actually agreed with. That is worse than an auditor who finds nothing, because it destroys correct claims, and no later check can catch it: the predicate is well formed, evaluable and reachable. A weak local model produced exactly this, with <strong>6 of 14 refutations</strong> restating the claim they were attacking; the other 8 negated their target properly, fired, and destroyed themselves harmlessly.</p>
+    </div>
+  </div>
+
+  <div class="phase">
+    <div class="pn">06</div>
+    <div>
+      <h3>Publish what survived</h3>
+      <div class="state"><span class="tag sealed">market data: closed</span><span class="tag off">model: idle</span></div>
+      <p>No model writes the report. It is assembled from surviving claims, so every sentence traces to a claim, every claim to a fact, and every fact to a row in the frozen data. The disproof conditions stay attached, so you can see what would make each argument wrong.</p>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="sectionhead"><span class="num">05</span><h2>The measurements, in plain words</h2></div>
+  <p>Every number the models reason about is computed in step 1 by ordinary arithmetic, never by the AI — because a model asked to compute an average will produce a plausible one.</p>
+
+  <h4>From the price chart</h4>
+  <div class="tscroll">
+    <table>
+      <thead><tr><th>Measure</th><th>What it is</th><th>What it suggests</th></tr></thead>
+      <tbody>
+        <tr><td class="k">Moving average<br><span class="mono">20 / 50 / 200 days</span></td><td>The average closing price over the last 20, 50 or 200 trading days.</td><td>A price above its 200-day average is in a long uptrend; below it, a long downtrend. The short averages show the recent mood.</td></tr>
+        <tr><td class="k">RSI<br><span class="mono">14 days</span></td><td>A 0–100 gauge comparing the size of recent gains with recent losses.</td><td>Above 70, the stock has risen hard and fast and may be stretched. Below 30, it has fallen hard. Around 50 is balanced.</td></tr>
+        <tr><td class="k">MACD</td><td>The gap between a fast and a slow moving average, plus a smoothed version of that gap.</td><td>When the gap is widening upward, momentum is building; when it shrinks or turns negative, momentum is fading.</td></tr>
+        <tr><td class="k">ATR<br><span class="mono">14 days</span></td><td>The typical daily trading range, shown as a percentage of the price.</td><td>How jumpy the stock is. 2% is calm; 6% means large daily swings, and a wider gap between a good day and a bad one.</td></tr>
+        <tr><td class="k">Volume ratio</td><td>Recent 5-day average trading volume divided by the 20-day average.</td><td>Above 1, more people are trading than usual, which lends weight to a price move. Below 1, a move is happening on thin participation.</td></tr>
+        <tr><td class="k">Returns and drawdown</td><td>Price change over 5, 30, 90 and 250 days, and the distance below the highest price of the past year.</td><td>Straightforward performance, and how far the stock sits below its best recent level.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <h4>From the accounts</h4>
+  <div class="tscroll">
+    <table>
+      <thead><tr><th>Measure</th><th>What it is</th><th>What it suggests</th></tr></thead>
+      <tbody>
+        <tr><td class="k">ROE</td><td>Profit as a percentage of shareholders' money in the business.</td><td>How well the company turns owners' capital into profit. Compared against its sector, never in isolation.</td></tr>
+        <tr><td class="k">ROCE</td><td>Profit as a percentage of all capital used, including borrowings.</td><td>Similar, but not flattered by heavy borrowing. High and sustained is the mark of a strong business.</td></tr>
+        <tr><td class="k">P/E and P/B</td><td>Price relative to annual profit, and relative to book value.</td><td>What you pay for each rupee of profit or assets. High means the market expects growth; if growth disappoints, the fall is further.</td></tr>
+        <tr><td class="k">Revenue and profit growth</td><td>Change against the previous financial year.</td><td>Whether the business is expanding, and whether profit is growing faster than sales.</td></tr>
+        <tr><td class="k">Operating margin</td><td>Operating profit as a percentage of revenue, and its change year on year.</td><td>Profit kept per rupee of sales, and whether that is improving.</td></tr>
+        <tr><td class="k">Leverage</td><td>Total liabilities divided by equity.</td><td>How much of the business is funded by others' money. Higher means higher risk when trading turns down.</td></tr>
+        <tr><td class="k">Bank measures<br><span class="mono">NIM · Net NPA · CASA</span></td><td>Lending margin, bad loans as a share of lending, and the share of cheap deposits.</td><td>Banks are judged on these because ROCE and leverage are meaningless for them — a bank's balance sheet is <em>supposed</em> to be mostly other people's money.</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="note">
+    <p><strong>An honest gap.</strong> The data provider supplies today's ratios with no date attached, and returns roughly a week of news rather than a month. So the fundamentals are current-but-undated, and news coverage is thin — 364 of 498 companies had no headlines at all in the latest run. Both facts are printed on every report rather than smoothed over.</p>
+  </div>
+</section>
+
+<section>
+  <div class="sectionhead"><span class="num">06</span><h2>How the top five actually emerge</h2></div>
+  <p>Walking through the run of 16 September 2026, with the real figures.</p>
+  <div class="funnel">
+    <div class="step"><span class="n">498</span><span class="l">companies</span></div>
+    <div class="step"><span class="n">20</span><span class="l">passed the filter</span></div>
+    <div class="step"><span class="n">289</span><span class="l">claims made</span></div>
+    <div class="step"><span class="n">243</span><span class="l">survived checking</span></div>
+    <div class="step"><span class="n">10</span><span class="l">published</span></div>
+  </div>
+  <p>Each company's score is the weighted sum of its surviving claims. HBL Engineering finished top with a score of 2.60, built from four surviving business claims and three price claims, against one business and two price claims arguing the other way:</p>
+
+  <div class="claimcard">
+    <div class="meta">business · supports · 0.80</div>
+    <p class="said">"Revenue grew 68.66% and net profit grew 205.61% year on year, reflecting a sharp acceleration in the business."</p>
+    <div class="test">wrong if: <code>revenue_growth_1y_pct &lt; 30 OR net_profit_growth_1y_pct &lt; 100</code> &nbsp; <span class="verdict kept">kept</span></div>
+  </div>
+  <div class="claimcard">
+    <div class="meta">price chart · argues against · 0.75</div>
+    <p class="said">"Despite the recent bounce, the stock remains 5.64% below its 200-day average and is down 34.46% from its 52-week high, indicating the longer-term trend is still impaired."</p>
+    <div class="test">wrong if: <code>price_vs_sma200_pct &gt;= 0 AND drawdown_from_52w_high_pct &gt;= -10</code> &nbsp; <span class="verdict kept">kept</span></div>
+  </div>
+  <p>Both survived, so both count — the second subtracting from the first. That is deliberate: a recommendation built only from supporting arguments is advertising.</p>
+
+  <h3>The label each company gets</h3>
+  <div class="grid2">
+    <div>
+      <h4>Buy</h4>
+      <p>Score of 1.0 or more, supporting claims in at least two different subjects including the business, and no surviving business argument against it with confidence 0.6 or higher.</p>
+    </div>
+    <div>
+      <h4>Watch</h4>
+      <p>Evidence survived, but not enough of it, or a serious counter-argument stands. The 16 September run produced ten of these and no buys.</p>
+    </div>
+    <div>
+      <h4>Avoid</h4>
+      <p>Score of −0.5 or below: the surviving evidence points the other way. Seven companies landed here, including two large IT firms.</p>
+    </div>
+    <div>
+      <h4>Nothing at all</h4>
+      <p>No surviving claims means the company is not published. If fewer than five make the list, the report says so and stays short — there is no code that can pad it.</p>
+    </div>
+  </div>
+  <p>The list is capped at ten. If only three companies earn a place, you get three, and a line explaining why.</p>
+</section>
+
+<section>
+  <div class="sectionhead"><span class="num">07</span><h2>Rule three: the bill is agreed in advance</h2></div>
+  <p>Before a single question is asked, the system prints exactly what the run will cost — derived from the number of companies, the models chosen, and a hard cap on the length of every question and answer. You approve that number, not a budget ceiling.</p>
+  <div class="tscroll">
+    <table>
+      <thead><tr><th>Work</th><th>Model</th><th class="num">Calls</th><th class="num">Committed</th><th class="num">Local</th></tr></thead>
+      <tbody>
+        <tr><td class="k">Business analysis</td><td>Claude Sonnet 5</td><td class="num">20</td><td class="num">$1.76</td><td class="num">$0.00</td></tr>
+        <tr><td class="k">Price-chart analysis</td><td>Claude Sonnet 5</td><td class="num">20</td><td class="num">$1.40</td><td class="num">$0.00</td></tr>
+        <tr><td class="k">News analysis</td><td>Claude Haiku 4.5</td><td class="num">20</td><td class="num">$0.55</td><td class="num">$0.00</td></tr>
+        <tr><td class="k">Probes</td><td>Claude Haiku 4.5</td><td class="num">40</td><td class="num">$0.78</td><td class="num">$0.00</td></tr>
+        <tr><td class="k">The auditor</td><td>Claude Sonnet 5</td><td class="num">5</td><td class="num">$1.20</td><td class="num">$0.00</td></tr>
+        <tr><td class="k">Maximum possible</td><td>—</td><td class="num">105</td><td class="num">$5.69</td><td class="num">$0.00</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>The two money columns describe the same run: identical call counts and identical token limits, priced against Claude or against a model on your own machine. A local run is not a smaller run, only a free one.</p>
+  <p>Each question must claim a pre-paid slot from that plan; there is no way to send a question without one, and the counter only goes down. A question longer than its allowance is refused rather than trimmed, because a silently shortened question produces an answer about incomplete evidence.</p>
+  <p>Because the mode changes which models the plan names, it changes the plan's fingerprint too — so an approval issued for a Claude run cannot start a local one, or the reverse. The last full Claude run, before probes existed, committed $3.69 across 65 calls and spent $1.68.</p>
+</section>
+
+<section>
+  <div class="sectionhead"><span class="num">08</span><h2>What this does not tell you</h2></div>
+  <p>The most useful section, and the one most systems leave out.</p>
+  <div class="note warn">
+    <p><strong>The method has not been shown to work.</strong> A walk-forward test — rebuilding the filter at past dates and measuring what followed — has now run over <strong>35 windows of four years</strong>, for all three ranking rules. None of them clears the bar, and all three report <code>promotion_ready: False</code>.</p>
+  </div>
+  <div class="tscroll">
+    <table>
+      <thead><tr><th>Ranking rule</th><th class="num">Precision (h20/k5)</th><th class="num">Excess, 20 sessions</th><th class="num">Worst drawdown</th></tr></thead>
+      <tbody>
+        <tr><td class="k">momentum_90d</td><td class="num">0.446</td><td class="num">−0.02%</td><td class="num">−36.2%</td></tr>
+        <tr><td class="k">risk_adjusted_momentum</td><td class="num">0.474</td><td class="num">−0.39%</td><td class="num">−29.7%</td></tr>
+        <tr><td class="k">trend_quality</td><td class="num">0.411</td><td class="num">−0.59%</td><td class="num">−40.8%</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Precision across every rule and horizon lands between <strong>0.411 and 0.480</strong> — a coin flip, where 0.5 would mean picking a better-than-average stock half the time. Over the following month the shortlist essentially matches the basket it was drawn from, and sometimes trails it. Over three months there is a positive excess of 1–3%, but it arrives with drawdowns approaching 40%, which is why the drawdown gate fails even where the return gate passes.</p>
+  <p>The test also flatters itself: it uses today's index membership, so companies that collapsed and fell out of the index are missing entirely.</p>
+  <ul>
+    <li><strong>The AI's arguments have never been tested against outcomes.</strong> The test above measures the arithmetic filter only. Whether the claim and veto layers add anything is unmeasured — which is the main reason the local-model mode exists, since answering it takes many runs.</li>
+    <li><strong>A surviving claim is not a true claim.</strong> It means the argument passed the test it set for itself. A weak test produces a weak survivor, which is why every test is printed beside its claim. And a test pointed the <em>wrong way</em> produces a false survivor that nothing can catch — see the worked examples in section 03, where a claim that the operating margin had improved survived at confidence 0.95 while the margin had in fact fallen by 1.62 points.</li>
+    <li><strong>Prices are one moment.</strong> The report carries the date of its data, and the date the prices actually end, which are not always the same — a market holiday leaves a gap.</li>
+    <li><strong>Roughly one company in ten has unusable accounts</strong> — stale by years, or simply absent. They are excluded, not estimated.</li>
+    <li><strong>It cannot trade, and never will.</strong> No order, portfolio or account function exists anywhere in the code. This is a research tool whose output a person reads and decides about.</li>
+  </ul>
+  <p>Everything published carries three fingerprints: the data, the settings, and the spending plan. Given those three, the same report can be reproduced exactly — which is what makes "why did it say that?" a question with an answer.</p>
+</section>
+
+<footer>
+  <div>Sealed Window · plain-language guide</div>
+  <div>Figures from the live run of 16 September 2026</div>
+  <div>Research only — not investment advice</div>
+</footer>
+
+</div>
+
+</body>
+</html>

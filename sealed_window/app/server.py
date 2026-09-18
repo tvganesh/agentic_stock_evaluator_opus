@@ -40,7 +40,15 @@ from ..governance.llm_gateway import ModelClient
 from ..governance.process_roles import current_role
 from ..governance.seal import SEAL
 from ..governance.spend import format_usd
-from ..orchestrator import MODEL_MODES, Orchestrator, RunRequest, RunState, make_model_client, prepare_run
+from ..orchestrator import (
+    DEFAULT_LOCAL_MODEL,
+    MODEL_MODES,
+    Orchestrator,
+    RunRequest,
+    RunState,
+    make_model_client,
+    prepare_run,
+)
 from ..publish.dossier import render_markdown
 from ..screen.config import SLIDERS, ScreenConfig
 from ..snapshot.store import list_snapshots
@@ -56,13 +64,16 @@ class PlanBody(BaseModel):
     snapshot_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
     config: ScreenConfig
     ceiling_usd: float | None = Field(None, gt=0, le=1000)
+    # The mode selects the plan's slot specs and so changes the plan hash: it must be part of the
+    # body the operator compiles a plan with, not only of the body that starts the run.
+    model_mode: str = Field("offline", pattern="^(anthropic|local|offline)$")
+    local_model: str = Field(DEFAULT_LOCAL_MODEL, min_length=1, max_length=100)
 
 
 class RunBody(PlanBody):
-    """Request body for starting a run: the plan body plus the approval and model mode."""
+    """Request body for starting a run: the plan body plus the approval and concurrency."""
 
     approved_plan_hash: str = Field(pattern=r"^[0-9a-f]{64}$")
-    model_mode: str = Field("offline", pattern="^(anthropic|offline)$")
     concurrency: int = Field(4, ge=1, le=8)
 
 
@@ -76,7 +87,7 @@ def create_app(
     snapshot_root: Path,
     runs_root: Path,
     scrubbed_env: Iterable[str] = (),
-    client_factory: Callable[[str], ModelClient] = make_model_client,
+    client_factory: Callable[[str, str], ModelClient] = make_model_client,
 ) -> FastAPI:
     """Build the FastAPI application bound to snapshot and run directories."""
     app = FastAPI(title="Sealed Window", docs_url=None, redoc_url=None, openapi_url=None)
@@ -136,7 +147,8 @@ def create_app(
     def plan(body: PlanBody) -> dict[str, Any]:
         """Run the deterministic screen and compile the spend plan the operator will approve."""
         try:
-            prepared = prepare_run(snapshot_root, body.snapshot_hash, body.config, _ceiling(body))
+            prepared = prepare_run(snapshot_root, body.snapshot_hash, body.config, _ceiling(body),
+                                   body.model_mode, body.local_model)
         except SnapshotIntegrityError as exc:
             raise HTTPException(404, str(exc)) from exc
         except SnapshotIncompatible as exc:
@@ -162,7 +174,8 @@ def create_app(
     def start_run(body: RunBody) -> dict[str, Any]:
         """Start a run in a background thread if the approval matches a freshly compiled plan."""
         try:
-            prepared = prepare_run(snapshot_root, body.snapshot_hash, body.config, _ceiling(body))
+            prepared = prepare_run(snapshot_root, body.snapshot_hash, body.config, _ceiling(body),
+                                   body.model_mode, body.local_model)
         except SnapshotIntegrityError as exc:
             raise HTTPException(404, str(exc)) from exc
         except SnapshotIncompatible as exc:
@@ -179,6 +192,7 @@ def create_app(
             runs[state.run_id] = state
         request = RunRequest(snapshot_hash=body.snapshot_hash, screen_config=body.config,
                              approved_plan_hash=body.approved_plan_hash, model_mode=body.model_mode,
+                             local_model=body.local_model,
                              ceiling_microusd=_ceiling(body), concurrency=body.concurrency)
 
         def target() -> None:

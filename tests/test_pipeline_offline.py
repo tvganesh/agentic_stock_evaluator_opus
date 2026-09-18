@@ -45,7 +45,7 @@ def _run(sealed_snapshot, runs_root, approved: str | None = None):
     prepared = prepare_run(root, root_hash, CONFIG)
     model = RecordingModel()
     state = RunState()
-    orchestrator = Orchestrator(snapshot_root=root, runs_root=runs_root, client_factory=lambda mode: model)
+    orchestrator = Orchestrator(snapshot_root=root, runs_root=runs_root, client_factory=lambda mode, local_model=None: model)
     request = RunRequest(root_hash, CONFIG, approved or prepared.plan.plan_hash, "offline")
     dossier = orchestrator.run(request, state)
     return dossier, runs_root / state.run_id, prepared, model
@@ -163,7 +163,7 @@ def test_unapproved_plan_aborts_before_any_model_call(sealed_snapshot, tmp_path)
     root, root_hash = sealed_snapshot
     model = RecordingModel()
     state = RunState()
-    orchestrator = Orchestrator(snapshot_root=root, runs_root=tmp_path, client_factory=lambda mode: model)
+    orchestrator = Orchestrator(snapshot_root=root, runs_root=tmp_path, client_factory=lambda mode, local_model=None: model)
     with pytest.raises(PlanNotApproved):
         orchestrator.run(RunRequest(root_hash, CONFIG, "0" * 64, "offline"), state)
     events = [e["event"] for e in AuditLog(tmp_path / state.run_id / "audit.jsonl").entries()]

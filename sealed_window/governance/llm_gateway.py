@@ -71,9 +71,15 @@ class ModelResult:
 
 
 class ModelClient(Protocol):
-    """Minimal model surface the gateway depends on. Note: no tools, no URLs, no model choice."""
+    """Minimal model surface the gateway depends on. Note: no tools, no URLs, no model choice.
+
+    ``permitted_hosts`` is optional: a client that reaches the network declares which hosts its
+    model window must open (the Anthropic endpoint, or the loopback set for a locally served
+    model), so the gateway never has to know about modes. A client without it gets the default.
+    """
 
     label: str
+    permitted_hosts: frozenset[str] | None
 
     def count_input_tokens(self, request: ModelRequest) -> int:
         """Return the exact input token count for ``request``."""
@@ -86,6 +92,7 @@ class AnthropicModelClient:
     """:class:`ModelClient` backed by the Anthropic Messages API with structured outputs."""
 
     label = "anthropic"
+    permitted_hosts = policy.MODEL_PROVIDER_HOSTS
 
     def __init__(self, timeout_s: float = 600.0) -> None:
         """Create an SDK client pinned to the policy's provider URL (credentials resolved by the SDK).
@@ -146,6 +153,21 @@ class AnthropicModelClient:
                            request_id=getattr(response, "_request_id", None), detail=detail)
 
 
+DEGRADED_STOP_REASONS: frozenset[str] = frozenset({
+    "context_truncated", "api_error", "connection_error", "schema_error", "malformed_response", "max_tokens",
+})
+"""Stop reasons where the model produced no usable answer *because something went wrong*.
+
+A call that returns nothing is ambiguous: a model can legitimately find nothing to say, and an
+empty batch is a real finding. These reasons are the other case -- the prompt was cut, the server
+errored, the output did not validate -- and they must not be reported as a considered silence.
+
+This distinction has already cost a diagnosis. Two local runs published dossiers in which the veto
+recorded no refutations; that read as an auditor with nothing to object to, and it took a canary
+probe to establish the auditor had never received the claims at all. Only the gateway can tell the
+two apart, because only the gateway sees ``stop_reason``."""
+
+
 class LLMGateway:
     """Enforces slots, phases, token limits, typed output and audit for every model call."""
 
@@ -165,6 +187,18 @@ class LLMGateway:
         self._phases = phases
         self._transcript_path = transcript_path
         self._transcript_lock = threading.Lock()
+        self._degraded: list[str] = []
+        self._degraded_lock = threading.Lock()
+
+    def drain_degraded(self) -> list[str]:
+        """Take the degraded-call messages recorded so far, so a run can surface them as notes.
+
+        Draining rather than reading keeps a note from being reported twice when the orchestrator
+        collects after each phase.
+        """
+        with self._degraded_lock:
+            messages, self._degraded = self._degraded, []
+        return messages
 
     @property
     def client_label(self) -> str:
@@ -194,7 +228,7 @@ class LLMGateway:
         )
         prompt_hash = content_hash(canonical_json({"system": system, "user": user, "schema": output_type.__name__}))
 
-        with self._phases.model_window():
+        with self._phases.model_window(getattr(self._client, "permitted_hosts", None)):
             counted = self._client.count_input_tokens(request)
             if counted > row.max_in:
                 self._ledger.settle(ticket, TokenUsage(0, 0))
@@ -224,6 +258,13 @@ class LLMGateway:
             "has_output": parsed is not None,
             **purpose,
         })
+        if result.stop_reason in DEGRADED_STOP_REASONS:
+            # Recorded, not raised: one bad slot costs its claims, it does not end the run. But it must
+            # reach the operator, or a broken call is indistinguishable from a model with nothing to say.
+            agent = purpose.get("agent", ticket.slot_class.value)
+            detail = f" ({result.detail})" if result.detail else ""
+            with self._degraded_lock:
+                self._degraded.append(f"{agent}: no usable answer, {result.stop_reason}{detail}")
         self._append_transcript(ticket, row.model, prompt_hash, result, parsed)
         return parsed
 

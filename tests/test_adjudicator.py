@@ -97,11 +97,18 @@ def test_refutations_are_held_to_the_same_standard(snapshot, pair):
     fires = refutation("roe_pct > 0")
     vacuous = refutation("roe_pct > 100000")
     wrong_target = refutation("roe_pct > 1", target_id="cl:ffffffffffffffff")
+    # Attacking a claim with the claim's own test asserts nothing: the target survived because that
+    # condition is false, so the "attack" stands unchallenged and vetoes a claim it agrees with.
+    circular = refutation("roe_pct < sector_roe_pct")
+    spaced = refutation("roe_pct<sector_roe_pct")  # same test, different formatting
     ref_verdicts, vetoed = adjudicator.adjudicate_refutations(
-        [fires, vacuous, wrong_target, sound], {target.claim_id: target}, phase="4b")
+        [fires, vacuous, wrong_target, circular, spaced, sound], {target.claim_id: target}, phase="4b")
     assert ref_verdicts[fires.refutation_id].verdict is Verdict.REFUTED
     assert ref_verdicts[vacuous.refutation_id].verdict is Verdict.VACUOUS
     assert ref_verdicts[wrong_target.refutation_id].verdict is Verdict.REJECTED
+    assert ref_verdicts[circular.refutation_id].verdict is Verdict.REJECTED
+    assert "attacks nothing" in ref_verdicts[circular.refutation_id].reason
+    assert ref_verdicts[spaced.refutation_id].verdict is Verdict.REJECTED, "compared as parsed trees, not text"
     assert ref_verdicts[sound.refutation_id].verdict is Verdict.SURVIVED
     assert vetoed[target.claim_id].verdict is Verdict.VETOED and sound.refutation_id in vetoed[target.claim_id].reason
 

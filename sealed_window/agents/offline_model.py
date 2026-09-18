@@ -44,6 +44,8 @@ class OfflineHeuristicModel:
     """Rule-based :class:`ModelClient` for offline runs; output is labelled ``offline-heuristic``."""
 
     label = "offline-heuristic"
+    permitted_hosts: frozenset[str] = frozenset()
+    """Nothing is reachable: this client computes, so an offline run opens no host at all."""
 
     def count_input_tokens(self, request: ModelRequest) -> int:
         """Estimate input tokens from the system and user prompt length."""

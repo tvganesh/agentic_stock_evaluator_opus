@@ -161,11 +161,15 @@ class SealState:
             raise SealViolation(f"Data network is not live (mode={self._mode.value}).")
 
     @contextlib.contextmanager
-    def model_window(self) -> Iterator[None]:
-        """Context in which exactly the model provider host is reachable and ``MODEL_RUNNING`` is true.
+    def model_window(self, permitted_hosts: frozenset[str] | None = None) -> Iterator[None]:
+        """Context in which exactly the model provider hosts are reachable and ``MODEL_RUNNING`` is true.
 
         Only the LLM gateway opens this. Refused while the data network is live or before sealing.
+        ``permitted_hosts`` defaults to the Anthropic endpoint; a local model passes the loopback set
+        from ``policy.model_hosts_for``, whose addresses are allowed to be connected to directly
+        because nothing resolves them.
         """
+        hosts = policy.MODEL_PROVIDER_HOSTS if permitted_hosts is None else frozenset(permitted_hosts)
         with self._lock:
             if self.network_live:
                 raise SealViolation("Invariant: cannot run a model while the data network is live.")
@@ -173,7 +177,9 @@ class SealState:
                 raise SealViolation("A model window requires a sealed process.")
             self._model_calls_in_flight += 1
             self._mode = NetworkMode.MODEL_WINDOW
-            self._permitted_hosts = policy.MODEL_PROVIDER_HOSTS
+            self._permitted_hosts = hosts
+            if hosts & policy.LOCAL_MODEL_HOSTS:
+                self._permitted_ips.update({"127.0.0.1", "::1"})
         try:
             yield
         finally:
@@ -311,9 +317,9 @@ class PhaseMachine:
             self._on_transition(old, self._phase)
 
     @contextlib.contextmanager
-    def model_window(self) -> Iterator[None]:
+    def model_window(self, permitted_hosts: frozenset[str] | None = None) -> Iterator[None]:
         """Open a seal model window, but only if the current phase permits models."""
         if self._phase not in MODEL_PHASES:
             raise PhaseViolation(f"Models may not run in phase {self._phase}.")
-        with self._state.model_window():
+        with self._state.model_window(permitted_hosts):
             yield

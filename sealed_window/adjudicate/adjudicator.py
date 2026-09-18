@@ -114,6 +114,12 @@ class Adjudicator:
             return Verdict.UNEVALUABLE, str(exc)
         if fired:
             return Verdict.REFUTED, f"falsifier fired on snapshot values ({_values_text(tree, row)})"
+        if dsl.pinned_comparisons(tree, row):
+            # Checked after `fired`: a pinned falsifier that somehow fires is a refutation, not a tautology.
+            return Verdict.VACUOUS, (
+                "falsifier threshold is the subject's own measured value, so it can never fire "
+                f"({_values_text(tree, row)})"
+            )
         if not dsl.is_reachable(tree, row, self._scenarios_for(tree, row)):
             return Verdict.VACUOUS, "falsifier cannot fire on any value observed in this snapshot's universe"
         return Verdict.SURVIVED, f"falsifier did not fire ({_values_text(tree, row)})"

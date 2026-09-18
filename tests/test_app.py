@@ -17,7 +17,7 @@ def app_client(sealed_snapshot, tmp_path):
     """A TestClient over the app with the offline model, in sealed process state."""
     SEAL.seal()
     root, root_hash = sealed_snapshot
-    app = create_app(snapshot_root=root, runs_root=tmp_path, client_factory=lambda mode: OfflineHeuristicModel())
+    app = create_app(snapshot_root=root, runs_root=tmp_path, client_factory=lambda mode, local_model=None: OfflineHeuristicModel())
     return TestClient(app), root_hash
 
 

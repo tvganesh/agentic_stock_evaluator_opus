@@ -22,7 +22,12 @@ from sealed_window.app.server import create_app
 from sealed_window.claims.validator import unsupported_figures
 from sealed_window.governance.errors import SnapshotIncompatible
 from sealed_window.governance.seal import SEAL
-from sealed_window.governance.spend import DEFAULT_SLOT_SPECS, SlotClass, compile_plan
+from sealed_window.governance.spend import (
+    DEFAULT_SLOT_SPECS,
+    PROBES_PER_CANDIDATE,
+    SlotClass,
+    compile_plan,
+)
 from sealed_window.orchestrator import prepare_run
 from sealed_window.screen.config import ScreenConfig
 from sealed_window.snapshot.columns import COLUMNS
@@ -60,12 +65,13 @@ def test_news_column_is_named_for_what_it_counts():
 
 
 def test_veto_output_limit_and_commitment():
-    """Veto slots allow 16,000 output tokens; 20 candidates commit claim slots plus 5 veto batches."""
+    """Veto slots allow 16,000 output tokens; 20 candidates commit analysts, probes and veto batches."""
     veto = next(spec for spec in DEFAULT_SLOT_SPECS if spec.slot_class is SlotClass.VETO)
     assert veto.max_out == 16_000
     plan = compile_plan(snapshot_hash="a" * 64, screen_config_hash="b" * 64, candidate_count=20)
-    per_candidate = (11_000 * 2 + 4_000 * 10) + (8_000 * 2 + 3_000 * 10) + (9_000 * 1 + 1_500 * 5)
-    assert plan.committed_total_microusd == 20 * per_candidate + 5 * (40_000 * 2 + 16_000 * 10)
+    analysts = (24_000 * 2 + 4_000 * 10) + (20_000 * 2 + 3_000 * 10) + (20_000 * 1 + 1_500 * 5)
+    probes = PROBES_PER_CANDIDATE * (12_000 * 1 + 1_500 * 5)
+    assert plan.committed_total_microusd == 20 * (analysts + probes) + 5 * (40_000 * 2 + 16_000 * 10)
 
 
 @pytest.fixture
@@ -88,6 +94,6 @@ def test_dashboard_reports_version_mismatch_as_conflict(old_version_snapshot, tm
     SEAL.seal()
     root, root_hash = old_version_snapshot
     client = TestClient(create_app(snapshot_root=root, runs_root=tmp_path / "runs",
-                                   client_factory=lambda mode: OfflineHeuristicModel()))
+                                   client_factory=lambda mode, local_model=None: OfflineHeuristicModel()))
     response = client.post("/api/plan", json={"snapshot_hash": root_hash, "config": {}})
     assert response.status_code == 409 and "fresh acquisition" in response.json()["detail"]

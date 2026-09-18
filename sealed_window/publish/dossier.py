@@ -223,8 +223,11 @@ def render_markdown(dossier: dict[str, Any]) -> str:
                    "otherwise a trading session is missing from the evidence.")
     if h["synthetic_data"]:
         out.append("> **SYNTHETIC DATA.** Built from the offline fixture market; these are not real companies or prices.")
-    if h["model_client"] != "anthropic":
+    if h["model_client"] == "offline-heuristic":
         out.append(f"> **Model client: {h['model_client']}.** Claims came from a rule-based stand-in, not an LLM.")
+    elif h["model_client"] != "anthropic":
+        out.append(f"> **Model client: {h['model_client']}.** Claims came from a model served on this "
+                   "machine, not the Anthropic API; treat its judgement accordingly.")
     r = h["reproducibility"]
     f = h["funnel"]
     out += [

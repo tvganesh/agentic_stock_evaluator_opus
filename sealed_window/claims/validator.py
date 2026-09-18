@@ -123,7 +123,29 @@ def validate_refutation(
     """Check a refutation targets a surviving claim and carries valid evidence and falsifier."""
     if refutation.target_claim_id not in surviving:
         return ValidationResult(False, f"target {refutation.target_claim_id} is not a surviving claim")
+    if _reuses_target_falsifier(refutation, surviving[refutation.target_claim_id]):
+        return ValidationResult(False, "refutation reuses its target's falsifier, so it attacks nothing")
     error, _ = _check_evidence(snapshot, refutation.evidence, refutation.subject)
     if error:
         return ValidationResult(False, error)
     return _check_falsifier(refutation.falsifier, refutation.dimension)
+
+
+def _reuses_target_falsifier(refutation: Refutation, target: Claim) -> bool:
+    """True if the refutation's disproof condition is the same test its target already passed.
+
+    A surviving claim survived *because* its falsifier is false on the snapshot. A refutation whose
+    falsifier is that same condition is therefore also false, so the attack "stands" without ever
+    having asserted anything -- and the harness records a veto that deletes a claim the auditor in
+    fact agreed with. That is worse than an auditor which finds nothing, because it destroys correct
+    claims, and no later check can catch it: the predicate is well formed, evaluable and reachable.
+
+    Measured on the qwen3:8b audit of 17 Sep 2026: of 14 refutations, the 8 that negated their
+    target's falsifier all fired and self-destructed harmlessly, while all 6 that reused it verbatim
+    stood as false vetoes. Comparison is on the parsed tree, so spacing and formatting do not matter;
+    an unparseable falsifier is left to :func:`_check_falsifier` to reject with its own reason.
+    """
+    try:
+        return dsl.parse(refutation.falsifier) == dsl.parse(target.falsifier)
+    except dsl.FalsifierError:
+        return False

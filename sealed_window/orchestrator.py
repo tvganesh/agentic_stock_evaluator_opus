@@ -47,22 +47,36 @@ from .governance.errors import (
 )
 from .governance.llm_gateway import LLMGateway, ModelClient
 from .governance.seal import SEAL, PhaseMachine, RunPhase
-from .governance.spend import SlotClass, SlotLedger, SpendPlan, assert_plan_approved, compile_plan
+from .governance.spend import (
+    DEFAULT_LOCAL_MODEL,
+    MODEL_MODES,
+    SlotClass,
+    SlotLedger,
+    SpendPlan,
+    assert_plan_approved,
+    compile_plan,
+    specs_for_mode,
+)
 from .publish.dossier import build_dossier, render_markdown
 from .screen.config import ScreenConfig
 from .screen.screen import ScreenResult, run_screen
 from .snapshot.columns import DERIVED_COLUMNS_VERSION
 from .snapshot.store import SealedSnapshot
 
-MODEL_MODES = ("anthropic", "offline")
+def make_model_client(mode: str, local_model: str = DEFAULT_LOCAL_MODEL) -> ModelClient:
+    """Construct the model client for ``mode``: Anthropic, a local server, or the offline stand-in.
 
-
-def make_model_client(mode: str) -> ModelClient:
-    """Construct the model client for ``mode``: the Anthropic API or the offline heuristic stand-in."""
+    ``local_model`` names the model the local server should run; it is ignored by the other modes,
+    which take their models from the compiled plan.
+    """
     if mode == "anthropic":
         from .governance.llm_gateway import AnthropicModelClient
 
         return AnthropicModelClient()
+    if mode == "local":
+        from .governance.local_client import LocalOpenAIModelClient
+
+        return LocalOpenAIModelClient()
     if mode == "offline":
         from .agents.offline_model import OfflineHeuristicModel
 
@@ -80,9 +94,19 @@ class PreparedRun:
 
 
 def prepare_run(
-    snapshot_root: Path, snapshot_hash: str, config: ScreenConfig, ceiling_microusd: int | None = None
+    snapshot_root: Path,
+    snapshot_hash: str,
+    config: ScreenConfig,
+    ceiling_microusd: int | None = None,
+    model_mode: str = "offline",
+    local_model: str = DEFAULT_LOCAL_MODEL,
 ) -> PreparedRun:
     """Load and verify the snapshot, run the screen and compile the plan (used by ``plan`` and ``run``).
+
+    ``model_mode`` and ``local_model`` select the plan's slot specs, so a local run commits $0.00
+    and names the model it will actually call. They are inputs to the plan hash: the operator
+    approves the models as well as the money, and approving an Anthropic plan cannot start a local
+    run (or the reverse).
 
     Refuses snapshots built with a different derived-column version (:class:`SnapshotIncompatible`).
     """
@@ -98,6 +122,7 @@ def prepare_run(
         snapshot_hash=snapshot.root_hash,
         screen_config_hash=screen.config_hash,
         candidate_count=len(screen.candidates),
+        specs=specs_for_mode(model_mode, local_model),
         ceiling_microusd=ceiling_microusd,
     )
     return PreparedRun(snapshot, screen, plan)
@@ -111,6 +136,7 @@ class RunRequest:
     screen_config: ScreenConfig
     approved_plan_hash: str
     model_mode: str = "offline"
+    local_model: str = DEFAULT_LOCAL_MODEL
     ceiling_microusd: int | None = None
     concurrency: int = 4
 
@@ -173,7 +199,7 @@ class Orchestrator:
         *,
         snapshot_root: Path,
         runs_root: Path,
-        client_factory: Callable[[str], ModelClient] = make_model_client,
+        client_factory: Callable[[str, str], ModelClient] = make_model_client,
     ) -> None:
         """Configure storage locations and how model clients are built."""
         self._snapshot_root = snapshot_root
@@ -201,7 +227,7 @@ class Orchestrator:
                                        "model_mode": request.model_mode, "seal": SEAL.status()})
             phases.advance(RunPhase.SCREEN)
             prepared = prepare_run(self._snapshot_root, request.snapshot_hash, request.screen_config,
-                                   request.ceiling_microusd)
+                                   request.ceiling_microusd, request.model_mode, request.local_model)
             snapshot, screen, plan = prepared.snapshot, prepared.screen, prepared.plan
             audit.record("screen.result", screen.summary())
             state.set(plan_hash=plan.plan_hash, funnel={"universe": len(snapshot.instruments),
@@ -217,7 +243,7 @@ class Orchestrator:
 
             ledger = SlotLedger(plan, audit)
             state.attach_ledger(ledger)
-            client = self._client_factory(request.model_mode)
+            client = self._client_factory(request.model_mode, request.local_model)
             gateway = LLMGateway(ledger=ledger, audit=audit, client=client, phases=phases,
                                  transcript_path=run_dir / "transcript.jsonl")
 
@@ -243,6 +269,9 @@ class Orchestrator:
                 state.set(claims=claim_ledger_view(snapshot, claims, verdicts))
             else:
                 notes.append("veto phase skipped: no surviving claims to audit")
+            # Degraded calls produced no claims for a reason the operator needs to see: a truncated
+            # prompt or a failed call must never read as a model that simply found nothing to say.
+            notes.extend(gateway.drain_degraded())
 
             phases.advance(RunPhase.PUBLISH)
             dossier = build_dossier(run_id=state.run_id, snapshot=snapshot, screen=screen, plan=plan,

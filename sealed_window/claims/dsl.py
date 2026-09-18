@@ -396,6 +396,59 @@ def evaluate(tree: BoolExpr, row: Mapping[str, float | None]) -> bool:
     raise Unevaluable(f"unsupported node {type(tree).__name__}")
 
 
+STRICT_OPERATORS = frozenset({"<", ">"})
+"""Only strict comparisons can be pinned: ``x >= v`` fires when ``x == v``, so it is a real test."""
+
+BOUNDARY_DECIMALS = 2
+"""A threshold carrying more precision than this was copied from a measurement, not chosen.
+
+Thresholds a person picks are round -- 0, 30, 1.5, 100. A threshold like 34.661507 matching the
+subject's RSI to six places was read off the row. The guard matters: ``news_count_7d > 0`` against
+a count of 0 is pinned *and legitimate* (the claim is "no headlines"; one headline disproves it),
+so precision, not zero margin, is what separates a copied value from a natural boundary."""
+
+
+def _literal(node: Arith) -> float | None:
+    """Constant value of an arithmetic node, unwrapping unary minus; None if it references a column.
+
+    The tokenizer matches only unsigned numerals, so ``> -1.6`` parses as ``Neg(Num(1.6))``. Without
+    unwrapping here, every negative threshold -- which is most pinned technical falsifiers -- is missed.
+    """
+    if isinstance(node, Num):
+        return float(node.value)
+    if isinstance(node, Neg):
+        inner = _literal(node.operand)
+        return None if inner is None else -inner
+    return None
+
+
+def pinned_comparisons(tree: BoolExpr, row: Mapping[str, float | None]) -> list[Compare]:
+    """Comparisons whose threshold is the subject's own measured value, so they can never fire.
+
+    The loophole this closes: a model reads ``rsi_14 = 34.661507`` off the evidence and writes
+    ``rsi_14 > 34.661507`` as its disproof condition. The claim then passes every other check --
+    the predicate is well-formed, evaluable, and reachable across the universe, since other
+    companies do sit above that level -- while failing by exactly zero for the one company it
+    describes. :func:`is_reachable` cannot catch it, because it asks whether the condition could
+    fire for *some* company, not for *this* one.
+    """
+    pinned = []
+    for node in comparisons(tree):
+        if node.op not in STRICT_OPERATORS:
+            continue
+        for column_side, literal_side in ((node.left, node.right), (node.right, node.left)):
+            if not isinstance(column_side, Col):
+                continue
+            threshold = _literal(literal_side)
+            observed = row.get(column_side.name)
+            if threshold is None or observed is None:
+                continue
+            if float(observed) == threshold and round(threshold, BOUNDARY_DECIMALS) != threshold:
+                pinned.append(node)
+                break
+    return pinned
+
+
 def is_reachable(
     tree: BoolExpr,
     row: Mapping[str, float | None],

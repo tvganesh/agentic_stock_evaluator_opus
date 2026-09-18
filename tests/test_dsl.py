@@ -51,6 +51,40 @@ def test_missing_value_and_division_by_zero_are_unevaluable():
         dsl.evaluate(dsl.parse("roe_pct / (close - 100) > 1"), ROW)
 
 
+PINNED_ROW = {"rsi_14": 34.661507, "return_5d_pct": -1.60804, "news_count_7d": 0.0,
+              "price_vs_sma50_pct": 3.0, "roe_pct": 18.0}
+
+
+@pytest.mark.parametrize("text,pinned", [
+    # Copied off the row to six places: fails by exactly zero, can never fire.
+    ("rsi_14 > 34.661507", True),
+    # Negative thresholds parse as Neg(Num(...)); most pinned technical falsifiers look like this.
+    ("return_5d_pct > -1.60804", True),
+    ("34.661507 < rsi_14", True),
+    # A real test: >= fires when the value equals the threshold.
+    ("rsi_14 >= 34.661507", False),
+    # A natural boundary, not a copied measurement: "no headlines" is disproved by one headline.
+    ("news_count_7d > 0", False),
+    # Ordinary thresholds, nowhere near the observed value.
+    ("rsi_14 > 70", False),
+    ("roe_pct < 15", False),
+    # Column-to-column comparisons have no literal to pin.
+    ("roe_pct < price_vs_sma50_pct", False),
+])
+def test_pinned_thresholds_are_detected(text, pinned):
+    """A threshold read off the subject's own row is a tautology, not a disproof condition.
+
+    Regression for the qwen3:8b run of 17 Sep 2026, where 12 of 26 surviving claims set their
+    threshold to the value they had just been shown.
+    """
+    assert bool(dsl.pinned_comparisons(dsl.parse(text), PINNED_ROW)) is pinned
+
+
+def test_pinned_check_ignores_missing_values():
+    """A column absent from the row cannot be pinned; it is unevaluable, which is a different verdict."""
+    assert dsl.pinned_comparisons(dsl.parse("rsi_14 > 34.661507"), {"rsi_14": None}) == []
+
+
 def test_vacuity_check():
     """A falsifier that can never fire on observed values is unreachable; a real one is reachable."""
     scenarios = {"close": [50.0, 80.0, 100.0, 150.0, 300.0], "roe_pct": [4.0, 10.0, 15.0, 22.0, 30.0]}

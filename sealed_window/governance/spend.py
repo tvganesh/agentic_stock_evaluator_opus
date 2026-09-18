@@ -65,7 +65,24 @@ class SlotClass(str, Enum):
     DEEP_FUNDAMENTAL = "deep.fundamental"
     DEEP_TECHNICAL = "deep.technical"
     DEEP_NEWS = "deep.news"
+    PROBE = "probe"
     VETO = "veto"
+
+
+FREE_MODEL_PREFIXES: tuple[str, ...] = ("qwen", "llama", "mistral", "gemma", "phi", "deepseek")
+"""Models served locally, priced at zero because the electricity is not billed per token.
+
+A plan run against one of these commits $0.00, which is true and keeps the approval step honest
+rather than quoting Anthropic prices for calls Anthropic never receives."""
+
+
+def price_of(model: str) -> tuple[int, int]:
+    """(input, output) price in µ$ per token; zero for locally served models, else from the table."""
+    if model in PRICING_USD_PER_MTOK:
+        return PRICING_USD_PER_MTOK[model]
+    if model.lower().startswith(FREE_MODEL_PREFIXES):
+        return (0, 0)
+    raise SpendViolation(f"no pricing for model {model!r}; refusing to plan a run whose cost is unknown")
 
 
 @dataclass(frozen=True)
@@ -80,10 +97,21 @@ class SlotClassSpec:
     per: str  # "candidate" | "veto_batch"
 
 
+PROBES_PER_CANDIDATE = 2
+"""Tool calls prepaid per candidate, shared by its three analysts.
+
+The pool enforced at runtime (``agents.tools.ProbePool``) is built from this same constant, so the
+number of probes paid for and the number allowed can never drift apart."""
+
 DEFAULT_SLOT_SPECS: tuple[SlotClassSpec, ...] = (
-    SlotClassSpec(SlotClass.DEEP_FUNDAMENTAL, "claude-sonnet-5", 11_000, 4_000, "medium", "candidate"),
-    SlotClassSpec(SlotClass.DEEP_TECHNICAL, "claude-sonnet-5", 8_000, 3_000, "medium", "candidate"),
-    SlotClassSpec(SlotClass.DEEP_NEWS, "claude-haiku-4-5", 9_000, 1_500, None, "candidate"),
+    # Input allowances leave room for a probe: a tool call resends the conversation so far, so the
+    # turn after a probe carries the opening slice, the request, and the returned table.
+    SlotClassSpec(SlotClass.DEEP_FUNDAMENTAL, "claude-sonnet-5", 24_000, 4_000, "medium", "candidate"),
+    SlotClassSpec(SlotClass.DEEP_TECHNICAL, "claude-sonnet-5", 20_000, 3_000, "medium", "candidate"),
+    SlotClassSpec(SlotClass.DEEP_NEWS, "claude-haiku-4-5", 20_000, 1_500, None, "candidate"),
+    # A probe turn re-reads the conversation and one returned table, then answers briefly: the
+    # judgement already happened on the analyst's model, so the cheap model carries the round trip.
+    SlotClassSpec(SlotClass.PROBE, "claude-haiku-4-5", 12_000, 1_500, None, "probe"),
     SlotClassSpec(SlotClass.VETO, "claude-sonnet-5", 40_000, 16_000, "high", "veto_batch"),
 )
 """Model tiering from the architecture: Sonnet for deep analysis and veto, Haiku for news.
@@ -96,9 +124,34 @@ VETO_BATCH_SIZE = 4
 """Candidates whose surviving claims are audited together in one veto call (sized to fit ``max_in``)."""
 
 
+MODEL_MODES = ("anthropic", "local", "offline")
+"""The model modes a run may use. Defined here, beside :func:`specs_for_mode`, because the CLI
+builds its parser from this tuple in either process role and may not import the orchestrator."""
+
+DEFAULT_LOCAL_MODEL = "qwen3:8b"
+"""Local model assumed when none is named; any model the server hosts may be passed instead."""
+
+
+def specs_for_mode(mode: str, local_model: str = DEFAULT_LOCAL_MODEL) -> tuple[SlotClassSpec, ...]:
+    """Slot specs for a run: the Claude tiering, or the same shape against one locally served model.
+
+    A local plan names the model it will actually call and commits $0.00, so the operator approves a
+    figure that matches what the run does rather than Anthropic prices for calls never sent.
+    """
+    if mode in ("anthropic", "offline"):
+        # The offline stand-in simulates these models, so it is costed as if it were them.
+        return DEFAULT_SLOT_SPECS
+    if mode == "local":
+        return tuple(
+            SlotClassSpec(spec.slot_class, local_model, spec.max_in, spec.max_out, None, spec.per)
+            for spec in DEFAULT_SLOT_SPECS
+        )
+    raise SpendViolation(f"unknown model mode {mode!r}; cannot choose slot specs")
+
+
 def call_bound_microusd(model: str, max_in: int, max_out: int) -> int:
     """Worst-case cost in µ$ of one call with the given limits."""
-    input_price, output_price = PRICING_USD_PER_MTOK[model]
+    input_price, output_price = price_of(model)
     return max_in * input_price + max_out * output_price
 
 
@@ -194,9 +247,13 @@ def compile_plan(
         raise ValueError("candidate_count must be >= 0")
     rows = []
     for spec in specs:
-        if spec.model not in PRICING_USD_PER_MTOK:
-            raise SpendViolation(f"no pricing for model {spec.model}; refusing to compile")
-        calls = candidate_count if spec.per == "candidate" else math.ceil(candidate_count / veto_batch_size)
+        price_of(spec.model)  # refuse to compile a plan whose cost cannot be stated
+        if spec.per == "candidate":
+            calls = candidate_count
+        elif spec.per == "probe":
+            calls = candidate_count * PROBES_PER_CANDIDATE
+        else:
+            calls = math.ceil(candidate_count / veto_batch_size)
         rows.append(
             PlanRow(
                 slot_class=spec.slot_class,
@@ -306,7 +363,7 @@ class SlotLedger:
         it is treated as a governance violation rather than a warning.
         """
         row = self._plan.row(ticket.slot_class)
-        input_price, output_price = PRICING_USD_PER_MTOK[row.model]
+        input_price, output_price = price_of(row.model)
         cost = usage.input_tokens * input_price + usage.output_tokens * output_price
         with self._lock:
             if ticket.ticket_id not in self._redeemed or ticket.ticket_id in self._settled:

@@ -29,6 +29,9 @@ from pathlib import Path
 
 from .governance.errors import GovernanceViolation
 from .governance.process_roles import enter_acquire_role, enter_sealed_role
+# Safe in either process role: the spend module is pure pricing data and is forbidden to neither.
+# The orchestrator, which the ACQUIRE role may not import, must not be reached at parser-build time.
+from .governance.spend import DEFAULT_LOCAL_MODEL, MODEL_MODES
 
 DATA_ROOT = Path("data")
 DEFAULT_SNAPSHOTS = DATA_ROOT / "snapshots"
@@ -156,7 +159,8 @@ def cmd_plan(args: argparse.Namespace) -> int:
     from .orchestrator import prepare_run
 
     ceiling = int(args.ceiling_usd * 1_000_000) if args.ceiling_usd is not None else None
-    prepared = prepare_run(args.snapshots, args.snapshot, _load_screen_config(args.screen), ceiling)
+    prepared = prepare_run(args.snapshots, args.snapshot, _load_screen_config(args.screen), ceiling,
+                           args.model, args.local_model)
     print(f"screen: {json.dumps(prepared.screen.summary())}")
     print(prepared.plan.as_table())
     print(f"\nTo run with this exact plan:\n  --approve-plan {prepared.plan.plan_hash}")
@@ -171,6 +175,7 @@ def cmd_evaluate(args: argparse.Namespace) -> int:
     ceiling = int(args.ceiling_usd * 1_000_000) if args.ceiling_usd is not None else None
     request = RunRequest(snapshot_hash=args.snapshot, screen_config=_load_screen_config(args.screen),
                          approved_plan_hash=args.approve_plan, model_mode=args.model,
+                         local_model=args.local_model,
                          ceiling_microusd=ceiling, concurrency=args.concurrency)
     state = RunState()
     dossier = Orchestrator(snapshot_root=args.snapshots, runs_root=args.runs).run(request, state)
@@ -265,9 +270,14 @@ def build_parser() -> argparse.ArgumentParser:
         cmd.add_argument("--snapshot", required=True, help="snapshot root hash")
         cmd.add_argument("--screen", type=Path, default=DEFAULT_SCREEN, help="screen config JSON")
         cmd.add_argument("--ceiling-usd", type=float, default=None, help="refuse plans committing more than this")
+        # --model and --local-model belong to both commands: the mode selects the plan's slot specs,
+        # so a plan printed in one mode does not hash-match a run started in another.
+        cmd.add_argument("--model", choices=MODEL_MODES, default="offline",
+                         help="anthropic (paid API), local (model served on this machine), offline (stand-in)")
+        cmd.add_argument("--local-model", default=DEFAULT_LOCAL_MODEL,
+                         help=f"model name for --model local (default {DEFAULT_LOCAL_MODEL})")
         if name == "evaluate":
             cmd.add_argument("--approve-plan", required=True, help="plan hash printed by the plan command")
-            cmd.add_argument("--model", choices=("anthropic", "offline"), default="offline")
             cmd.add_argument("--concurrency", type=int, default=4)
         cmd.set_defaults(func=func)
 

@@ -82,6 +82,19 @@ MODEL_PROVIDER_BASE_URL = "https://api.anthropic.com"
 MODEL_PROVIDER_HOSTS: frozenset[str] = frozenset({"api.anthropic.com"})
 """The only hosts reachable from the sealed process, and only inside a model window."""
 
+LOCAL_MODEL_BASE_URL = "http://127.0.0.1:11434/v1"
+LOCAL_MODEL_HOSTS: frozenset[str] = frozenset({"127.0.0.1", "localhost", "::1"})
+"""Loopback only, for a model served on this machine (Ollama and similar).
+
+A deliberate, narrow entry rather than a general opening: a local model window reaches the loopback
+interface and nothing else, so an injected instruction still has nowhere off the machine to send to.
+Serving a model from another host would be a further reviewed change, not covered by this."""
+
+
+def model_hosts_for(mode: str) -> frozenset[str]:
+    """Hosts a model window may reach for ``mode`` ('anthropic' or 'local'); unknown modes get none."""
+    return {"anthropic": MODEL_PROVIDER_HOSTS, "local": LOCAL_MODEL_HOSTS}.get(mode, frozenset())
+
 # --------------------------------------------------------------------------------------
 # Process-role import boundaries
 # --------------------------------------------------------------------------------------
@@ -90,6 +103,7 @@ ACQUIRE_ROLE_FORBIDDEN_MODULES: tuple[str, ...] = (
     "anthropic",
     "sealed_window.agents",
     "sealed_window.governance.llm_gateway",
+    "sealed_window.governance.local_client",
     "sealed_window.orchestrator",
     "sealed_window.app",
 )

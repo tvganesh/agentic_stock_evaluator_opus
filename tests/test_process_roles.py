@@ -44,7 +44,7 @@ def _import_attempt(role_call: str, module: str) -> str:
 def test_acquire_role_cannot_load_models_or_orchestrator():
     """No model can exist in the process that holds the network."""
     for module in ("anthropic", "sealed_window.agents.claim_agents", "sealed_window.orchestrator",
-                   "sealed_window.governance.llm_gateway"):
+                   "sealed_window.governance.llm_gateway", "sealed_window.governance.local_client"):
         result = _run(_import_attempt("enter_acquire_role()", module))
         assert result.stdout.strip() == "ProcessRoleViolation", (module, result.stdout, result.stderr)
 
