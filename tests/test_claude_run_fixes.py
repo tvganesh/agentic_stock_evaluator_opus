@@ -18,7 +18,9 @@ from sealed_window.snapshot import indicators as ind
 from sealed_window.acquire.etl import build_snapshot_content
 from sealed_window.acquire.fixture_source import SyntheticMarket
 from sealed_window.agents.offline_model import OfflineHeuristicModel
+from sealed_window.agents.prompts import VETO_SYSTEM_PROMPT, claim_system_prompt
 from sealed_window.app.server import create_app
+from sealed_window.claims.schema import ClaimDraft, RefutationDraft
 from sealed_window.claims.validator import unsupported_figures
 from sealed_window.governance.errors import SnapshotIncompatible
 from sealed_window.governance.seal import SEAL
@@ -30,7 +32,7 @@ from sealed_window.governance.spend import (
 )
 from sealed_window.orchestrator import prepare_run
 from sealed_window.screen.config import ScreenConfig
-from sealed_window.snapshot.columns import COLUMNS
+from sealed_window.snapshot.columns import COLUMNS, Dimension
 from sealed_window.snapshot.store import write_snapshot
 
 
@@ -56,6 +58,42 @@ def test_sector_benchmarks_are_columns():
     ]
     row = ind.fundamental_row(ratios, None, None, None, date(2026, 9, 15))
     assert (row["sector_pb"], row["sector_roa_pct"], row["sector_ev_ebitda"]) == (1.53, 7.54, 6.94)
+
+
+def _bounds(model, field: str) -> tuple[int, int]:
+    """The min and max length Pydantic actually enforces for one field."""
+    meta = model.model_fields[field].metadata
+    low = next(m.min_length for m in meta if hasattr(m, "min_length"))
+    high = next(m.max_length for m in meta if hasattr(m, "max_length"))
+    return low, high
+
+
+def test_prompts_state_the_length_budgets_the_schema_enforces():
+    """The models must be told the limits they are failed against, and told them accurately.
+
+    These are validated after generation, not enforced by the sampler, and one field outside its
+    range invalidates the whole batch: on 18 Sep 2026 a single short justification destroyed every
+    claim in two fundamental calls, and an over-long refutation statement cost a veto batch twice.
+    The models had never been shown any of those numbers.
+
+    Pinned as a pair because prose and constraint can drift apart silently, and a prompt quoting a
+    limit the validator does not enforce is worse than a prompt saying nothing: it reads as correct.
+    """
+    fundamental = claim_system_prompt(Dimension.FUNDAMENTAL)
+    for model, field, text in (
+        (ClaimDraft, "statement", fundamental),
+        (ClaimDraft, "justification", fundamental),
+        (ClaimDraft, "falsifier", fundamental),
+        (RefutationDraft, "statement", VETO_SYSTEM_PROMPT),
+        (RefutationDraft, "falsifier", VETO_SYSTEM_PROMPT),
+    ):
+        low, high = _bounds(model, field)
+        assert f"{field} {low}-{high}" in text, f"{model.__name__}.{field} budget not stated as written"
+
+    # Stating the range is not enough: a model that does not know one bad field costs the whole
+    # response has no reason to trade a longer answer for a safer one.
+    for text in (fundamental, VETO_SYSTEM_PROMPT):
+        assert "invalidates the entire batch" in text
 
 
 def test_news_column_is_named_for_what_it_counts():

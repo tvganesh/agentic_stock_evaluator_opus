@@ -48,7 +48,11 @@ class ClaimDraft(BaseModel):
     direction: Direction = Field(description="positive if it supports owning the stock, negative if it undermines it")
     statement: str = Field(min_length=10, max_length=400, description="One or two plain sentences; cite only figures present in the evidence")
     justification: str = Field(
-        min_length=40,
+        # 20, not 40: length constraints are validated after generation, not enforced by the sampler,
+        # and a violation invalidates the whole batch. On 18 Sep 2026 two fundamental agents lost every
+        # claim they wrote because one justification came in under 40 characters. A floor exists to stop
+        # a one-word argument, and 20 does that without letting a short field destroy four good claims.
+        min_length=20,
         max_length=800,
         description=(
             "Why this claim follows from the evidence: which figures carry it, what they imply, and "
@@ -84,7 +88,10 @@ class RefutationDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     target_claim_id: ClaimRef = Field(description="ID of the surviving claim being attacked")
-    statement: str = Field(min_length=10, max_length=400, description="Why the target claim is wrong")
+    # 1000, not 400: "here is why this claim is wrong, and here are the figures" does not reliably fit
+    # in 400 characters. That cap cost a whole veto batch twice -- 16 Sep and again 18 Sep, the second
+    # time leaving 22 claims unaudited after the call had been paid for.
+    statement: str = Field(min_length=10, max_length=1000, description="Why the target claim is wrong")
     evidence: list[EvidenceRef] = Field(min_length=1, max_length=8)
     falsifier: str = Field(min_length=3, max_length=300, description="DSL predicate that, if TRUE, shows this refutation is wrong")
 
