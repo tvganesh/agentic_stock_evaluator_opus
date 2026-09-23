@@ -10,7 +10,7 @@ throws away every argument that the numbers contradict. It recommends; it cannot
 | **Market** | NSE equities (Nifty 500) |
 | **Data** | Upstox, read-only |
 | **Models** | Claude Sonnet 5 & Haiku 4.5, or a model served on your own machine |
-| **Last run** | 16 Sep 2026 · 10 picks · $1.68 |
+| **Last run** | 18 Sep 2026 · 10 picks · $1.61 |
 
 ---
 
@@ -83,6 +83,30 @@ evaluate against the saved data.
 The computer reads the formula, plugs in the saved numbers, and gets a straight yes or no. "The
 condition came true" means the claim is wrong, and it is deleted — not softened, not down-weighted.
 Nothing about the model's tone or confidence can save it.
+
+### Who writes what
+
+This is the part most people get backwards, so it is worth stating flatly: **the model writes both
+halves.** The sentence and the formula that would disprove it arrive together, in one answer, from
+the same model. Nothing in the code composes a formula on the model's behalf.
+
+Python's role is the other three:
+
+| | Who does it |
+|---|---|
+| Computing the numbers — ROCE, RSI, the sector benchmarks | **Python** |
+| Writing the claim, and the formula that would disprove it | **The model** |
+| Checking that formula is grammatical and uses permitted columns | **Python** |
+| Running it against the saved data and returning the verdict | **Python** |
+
+So the measurements are the machine's, the argument and the test it must pass are the model's, and
+the verdict is the machine's again. The model is being asked to state the terms of its own defeat.
+
+One consequence matters. **The model cannot run its own test** — there is no evaluator in its
+toolbox, so it writes the pair blind, and the checking happens later in a step with no model in it.
+But it *can see* the numbers it is writing about, which leaves the opening for a model to set its own
+passing grade at a mark it has already cleared. That is a real failure, not a hypothetical; case 5
+below is one, and the check that now catches it came afterwards.
 
 ### Four ways a claim dies
 
@@ -224,9 +248,10 @@ claim is printed beside its test: so a reader can apply the question above.
 ### 01 · Collect and freeze
 `market data: connected` · `model: idle`
 
-For each of the ~500 companies: ten years of daily prices, six headline ratios, the last four years
-and four quarters of results, the balance sheet, and recent news. That is about 3,000 requests, paced
-to stay inside the provider's limits, and takes roughly 40 minutes.
+For each of the ~500 companies: four years of daily prices — about 1,000 trading sessions — six
+headline ratios, the last four annual and four quarterly results, the balance sheet, and recent
+news. That is about 3,000 requests, paced to stay inside the provider's limits, and takes roughly
+40 minutes.
 
 The result is written once, made read-only, and fingerprinted. Any later change to a single digit
 makes the fingerprint fail, and the analysis refuses to run. Every individual fact gets its own
@@ -236,9 +261,30 @@ refer to it.
 ### 02 · Filter down to a shortlist
 `market data: closed` · `model: idle`
 
-Plain arithmetic, no AI: from ~500 companies down to about 170 that meet your thresholds, then the
-top 20 by return on capital. These are the sliders you set — profitability, growth, valuation, price
-behaviour — and they are compared against the saved numbers directly.
+Plain arithmetic, no AI, in two stages.
+
+**Stage one — the sliders.** Profitability, growth, valuation and price behaviour are compared
+against the saved numbers directly. In the 18 September run this took 498 companies down to the 192
+that met every threshold.
+
+**Stage two — the ranking.** Those 192 are then ordered, and not on one number. Each company is
+scored on **fourteen measures across five groups**, and on every measure it is placed as a
+*percentile of the whole universe* rather than tested against a fixed cut-off:
+
+| Group | Weight | Measures |
+|---|---:|---|
+| Quality | 0.30 | ROCE vs sector, ROE vs sector, operating-margin trend |
+| Value | 0.20 | P/E, P/B, EV/EBITDA — each against its sector, lower being better |
+| Growth | 0.20 | revenue growth, profit growth |
+| Trend | 0.20 | price vs the 200-day average, MACD histogram, 90-day return |
+| Risk | 0.10 | ATR and volatility (lower better), drawdown from the 52-week high |
+
+The top 15 go forward. The other 177 are dropped, and the report states that number rather than
+leaving it implied.
+
+One rule matters more than it looks: a measure a company cannot have — a bank has no meaningful ROCE
+or EV/EBITDA — scores at the **median**, not at the bottom. Scoring it last would have ranked banks
+by what they structurally lack.
 
 Two deliberate refusals here: a company missing a required number is *rejected*, never given the
 benefit of the doubt; and a company whose accounts are too old to trust is rejected even if every
@@ -247,10 +293,17 @@ other number looks perfect.
 ### 03 · Ask for arguments
 `market data: closed` · `model: thinking`
 
-Each of the 20 companies gets three separate questions, asked independently, each seeing only its own
+Each of the 15 companies gets three separate questions, asked independently, each seeing only its own
 slice of data: one about the business (Claude Sonnet 5), one about the price chart (Sonnet 5), one
 about the news (the cheaper Haiku 4.5). Each returns at most six claims, each with evidence
-references, a confidence between 0.05 and 0.95, and its disproof condition.
+references, a confidence between 0.05 and 0.95, a written justification, and its disproof condition.
+
+The justification is asked for outright because the model's own deliberation cannot be recovered —
+the provider returns the thinking block with its signature but an empty body. So this is the model's
+*argument*, not a recording of its reasoning, and the difference matters: a post-hoc justification
+can be a plausible story rather than the path actually taken. What keeps it honest is that it faces
+the same figure check as the statement — quote a number that appears nowhere in the cited evidence
+and it is withheld. The falsifier remains the only part a machine re-checks against the data.
 
 Before committing, an analyst may ask for more of the frozen data — deeper price history, the full
 statement tables, how the company ranks against its peers, or further news pages. These four probes
@@ -345,40 +398,73 @@ because a model asked to compute an average will produce a plausible one.
 
 ## 06 · How the top five actually emerge
 
-Walking through the run of 16 September 2026, with the real figures.
+Walking through the run of 18 September 2026, with the real figures.
 
-| 498 | → | 20 | → | 289 | → | 243 | → | 10 |
+| 498 | → | 192 | → | 15 | → | 137 | → | 127 |
 |---|---|---|---|---|---|---|---|---|
-| companies | | passed the filter | | claims made | | survived checking | | published |
+| companies | | passed the filters | | shortlisted | | claims made | | survived checking |
 
-Each company's score is the weighted sum of its surviving claims. HBL Engineering finished top with a
-score of 2.60, built from four surviving business claims and three price claims, against one business
-and two price claims arguing the other way:
+Fourteen companies were published: ten to watch, four to avoid. The Great Eastern Shipping Company
+finished top with a score of **3.49**, from nine surviving claims — four business claims supporting
+it and one against, three price claims supporting and one against, and nothing from news, because
+GESHIP had no headlines in the window.
 
-> *business · supports · 0.80*
->
-> "Revenue grew 68.66% and net profit grew 205.61% year on year, reflecting a sharp acceleration in
-> the business."
->
-> wrong if: `revenue_growth_1y_pct < 30 OR net_profit_growth_1y_pct < 100` → **kept**
+Here is that score, computed in full. Each dimension's surviving claims are summed with their
+confidences signed by direction, then weighted:
 
-> *price chart · argues against · 0.75*
+| Dimension | Surviving | Signed sum | Weight | Contribution |
+|---|---|---:|---:|---:|
+| Business | 4 for, 1 against | 2.25 | 1.0 | 2.25 |
+| Price chart | 3 for, 1 against | 1.55 | 0.8 | 1.24 |
+| News | none | 0.00 | 0.5 | 0.00 |
+| | | | **Total** | **3.49** |
+
+News carries the lowest weight because it is the one input written by strangers. No model performs
+this arithmetic — it is fixed Python over the surviving claims, which is why the published score can
+be recomputed from the stored ledger and must agree.
+
+Two of the nine, in opposite directions:
+
+> *business · supports · 0.70*
 >
-> "Despite the recent bounce, the stock remains 5.64% below its 200-day average and is down 34.46%
-> from its 52-week high, indicating the longer-term trend is still impaired."
+> "GESHIP trades at a P/E of 5.3x versus a sector P/E of 19.27x, and EV/EBITDA of 3.15x versus sector
+> 12.68x, indicating a steep valuation discount despite superior returns."
 >
-> wrong if: `price_vs_sma200_pct >= 0 AND drawdown_from_52w_high_pct >= -10` → **kept**
+> *why:* "The P/E and EV/EBITDA gaps are large and consistent across two evidence sources. This could
+> reflect market skepticism about cyclicality in shipping earnings rather than pure undervaluation,
+> which argues against taking the discount at face value."
+>
+> wrong if: `pe >= sector_pe OR ev_ebitda >= sector_ev_ebitda` → **kept**
+
+> *business · argues against · 0.65*
+>
+> "Revenue growth of only 2.53% year-on-year is modest, and prior year annual revenue (6156.88 crore)
+> was itself down from FY2023's 6171.14 crore, suggesting stagnant top-line trends despite margin
+> gains."
+>
+> *why:* "The yearly income statement shows revenue moving from 6171.14 (FY2023) to 5918.7 (FY2024)
+> to 6156.88 (FY2025) to 6312.42 (FY2026), a choppy and low-growth pattern. This undermines the
+> narrative of strong fundamental momentum, and raises the question of whether profit gains are
+> cyclical (freight rates) rather than volume-driven."
+>
+> wrong if: `revenue_growth_1y_pct > 8` → **kept**
 
 Both survived, so both count — the second subtracting from the first. That is deliberate: a
 recommendation built only from supporting arguments is advertising.
+
+The "why" lines are worth reading twice. The first claim's own justification argues that its
+headline figure might be a value trap; the second reaches its bearish conclusion while conceding the
+margin gains are real. That is the justification field doing the job it was added for — and note that
+neither of them changes the verdict. A claim lives or dies by its falsifier, not by how well it
+argued.
 
 ### The label each company gets
 
 | Label | Rule |
 |---|---|
 | **Buy** | Score of 1.0 or more, supporting claims in at least two different subjects including the business, and no surviving business argument against it with confidence 0.6 or higher. |
-| **Watch** | Evidence survived, but not enough of it, or a serious counter-argument stands. The 16 September run produced ten of these and no buys. |
-| **Avoid** | Score of −0.5 or below: the surviving evidence points the other way. Seven companies landed here, including two large IT firms. |
+| **Watch** | Evidence survived, but not enough of it, or a serious counter-argument stands. The 18 September run produced ten of these and no buys. |
+| **Avoid** | Score of −0.5 or below: the surviving evidence points the other way. Four companies landed here on 18 September: CCL (−1.84), Lupin (−0.91), Lloyds Metals (−0.87) and MCX (−0.54). |
 | **Nothing at all** | No surviving claims means the company is not published. If fewer than five make the list, the report says so and stays short — there is no code that can pad it. |
 
 The list is capped at ten. If only three companies earn a place, you get three, and a line explaining
@@ -394,19 +480,20 @@ answer. You approve that number, not a budget ceiling.
 
 | Work | Model | Calls | Committed | Local |
 |---|---|---:|---:|---:|
-| Business analysis | Claude Sonnet 5 | 20 | $1.76 | $0.00 |
-| Price-chart analysis | Claude Sonnet 5 | 20 | $1.40 | $0.00 |
-| News analysis | Claude Haiku 4.5 | 20 | $0.55 | $0.00 |
-| Probes | Claude Haiku 4.5 | 40 | $0.78 | $0.00 |
-| The auditor | Claude Sonnet 5 | 5 | $1.20 | $0.00 |
-| **Maximum possible** | — | **105** | **$5.69** | **$0.00** |
+| Business analysis | Claude Sonnet 5 | 15 | $1.32 | $0.00 |
+| Price-chart analysis | Claude Sonnet 5 | 15 | $1.05 | $0.00 |
+| News analysis | Claude Haiku 4.5 | 15 | $0.41 | $0.00 |
+| Probes | Claude Haiku 4.5 | 30 | $0.59 | $0.00 |
+| The auditor | Claude Sonnet 5 | 5 | $1.60 | $0.00 |
+| **Maximum possible** | — | **80** | **$4.97** | **$0.00** |
 
 The two columns are the same run: identical call counts and identical token limits, priced against
 Claude or against a model on your own machine. A local run is not a smaller run, only a free one.
 
 Because the mode changes which models the plan names, it changes the plan's fingerprint too — so an
-approval issued for a Claude run cannot start a local one, or the reverse. The last full Claude run,
-before probes existed, committed $3.69 across 65 calls and spent $1.68.
+approval issued for a Claude run cannot start a local one, or the reverse. The 18 September run
+committed $4.97 across 80 calls and spent **$1.61** — the committed figure is the ceiling, not the
+forecast, and a run that needs fewer tokens than its cap simply costs less.
 
 Each question must claim a pre-paid slot from that plan; there is no way to send a question without
 one, and the counter only goes down. A question longer than its allowance is refused rather than
@@ -458,5 +545,5 @@ question with an answer.
 
 ---
 
-*Sealed Window · plain-language guide · figures from the live run of 16 September 2026 · research
+*Sealed Window · plain-language guide · figures from the live runs of 16 and 18 September 2026 · research
 only — not investment advice*

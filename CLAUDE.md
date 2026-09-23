@@ -171,7 +171,7 @@ ledger where claims appear and are struck through as they are killed, and the do
 - **Numbers are computed in Python, never by a model.** A model interprets; it does not calculate.
 - **Every module, class, function and method carries a docstring** saying what it does and how it
   relates to the system. Nothing enforces this automatically — it holds by review, so keep it up.
-- **Tests require no network and no credentials.** `.venv/bin/python -m pytest -q` — 196 at present.
+- **Tests require no network and no credentials.** `.venv/bin/python -m pytest -q` — 209 at present.
 - **`data/` is not committed**: snapshots, audit logs, run artefacts and backtests are regenerable.
 
 ---
