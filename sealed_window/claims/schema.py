@@ -120,13 +120,18 @@ class Claim(BaseModel):
     evidence: list[str]
     confidence: float
     falsifier: str
+    direction_source: str = "model"
+    """``model`` if the model's own label stands, ``signal_table`` if the harness set it from the table
+    rule whose falsifier the claim copied. Defaults to ``model`` so ledgers written before 26 Sep 2026 load."""
 
     @classmethod
-    def from_draft(cls, draft: ClaimDraft, *, subject: str, dimension: Dimension, slot_class: str) -> "Claim":
+    def from_draft(cls, draft: ClaimDraft, *, subject: str, dimension: Dimension, slot_class: str,
+                   direction_source: str = "model") -> "Claim":
         """Bind a model draft to its subject and dimension and derive a content-based ``claim_id``."""
         body = draft.model_dump(mode="json")
         claim_id = "cl:" + hash_object({"subject": subject, "dimension": dimension.value, **body})[:16]
-        return cls(claim_id=claim_id, subject=subject, dimension=dimension, slot_class=slot_class, **body)
+        return cls(claim_id=claim_id, subject=subject, dimension=dimension, slot_class=slot_class,
+                   direction_source=direction_source, **body)
 
 
 class Refutation(BaseModel):

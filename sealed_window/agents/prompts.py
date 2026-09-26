@@ -23,7 +23,8 @@ import json
 from functools import lru_cache
 from typing import Any, Iterable
 
-from ..claims.schema import Claim
+from ..claims.schema import Claim, ClaimBatch
+from ..claims.signals import POSITIVE, Signal, examples_for, signals_for
 from ..claims.validator import ALLOWED_FALSIFIER_DIMENSIONS
 from ..snapshot.columns import COLUMNS, Dimension, columns_for
 from ..snapshot.store import SealedSnapshot
@@ -112,10 +113,69 @@ _ROLE_TEXT = {
 }
 
 
+MAX_CLAIMS_PER_CALL = ClaimBatch.model_fields["claims"].metadata[0].max_length
+"""How many claims one analyst answer may hold, read from the schema so the prompt cannot drift from it."""
+
+_SIGNAL_RULES_INTRO = f"""\
+Signal rules. Each signal below has a rule for owning the stock (FOR, direction "positive") and a rule
+against it (AGAINST, direction "negative"). How to use them:
+1. For each signal, find the company's figures in the slice and compare them with the rules yourself.
+   Decide which rule holds, if any. Some signals will have none.
+2. Write the figures first and the conclusion after, as the examples do. The conclusion must follow
+   from the figures: a P/E above the sector P/E is expensive on earnings, never cheap.
+3. One rule per claim. Give the claim that rule's direction and copy that rule's falsifier exactly.
+4. You may write at most {MAX_CLAIMS_PER_CALL} claims. Choose the most material rules that hold, and include
+   both FOR and AGAINST claims whenever both sides have rules that hold.
+5. Skip a signal outside its stated use, such as a bank-only signal for a company that is not a bank.
+6. You may also make a claim outside these rules; then write its falsifier yourself under the language
+   rules above.
+The examples describe OTHER companies on 17 Sep 2026. Their figures illustrate the pattern only: never
+quote them or cite them as evidence for this company."""
+"""The signal rules replace a hand-written checklist and reference-level block; history, all 26 Sep 2026,
+on the same 15 candidates as the Claude run of 18 Sep:
+
+* qwen3:14b with no checklist wrote 95 positive claims to 48 negative, published no AVOID where Claude
+  found four, and on MCX never mentioned a P/E of 53x against a sector 32x.
+* A risk-only checklist swung it to 38 positive and 64 negative: six risks per analyst against a
+  six-claim limit used every slot.
+* A two-sided checklist balanced the counts but was recited, not checked: "cheap on earnings" was
+  written for 7 of the 8 stocks whose P/E was above the sector's, because the model chose the direction
+  and sentence before writing a figure. Where it reached the falsifier it sometimes wrote it backwards.
+
+The table (``claims.signals``) now carries each rule with a falsifier proven to negate it, and worked
+examples that state figures before conclusions; the model is asked to compare, then copy the falsifier.
+"""
+
+
+def _render_signal(signal: Signal) -> str:
+    """One signal as prompt text: meaning, use, each rule with its falsifier, then worked examples."""
+    use = f" Use only {signal.guard_note}." if signal.guard_note else ""
+    lines = [f"[{signal.title}] {signal.meaning}{use}"]
+    for rule in signal.rules:
+        side = "FOR" if rule.direction == POSITIVE else "AGAINST"
+        lines.append(f"  {side} when {rule.condition}: {rule.label}. Falsifier: {rule.falsifier}")
+    examples = [(rule, example) for rule in signal.rules for example in examples_for(rule)]
+    if examples:
+        lines.append("  Examples:")
+        lines += [f"  - {'FOR' if rule.direction == POSITIVE else 'AGAINST'}: {rule.render(example)}"
+                  for rule, example in examples]
+    return "\n".join(lines)
+
+
+@lru_cache(maxsize=None)
+def signal_rules_text(dimension: Dimension) -> str:
+    """The signal table rendered for one analyst, or an empty string if the dimension has no signals."""
+    table = signals_for(dimension)
+    if not table:
+        return ""
+    return "\n\n".join([_SIGNAL_RULES_INTRO, *(_render_signal(signal) for signal in table)])
+
+
 @lru_cache(maxsize=None)
 def claim_system_prompt(dimension: Dimension) -> str:
-    """The frozen system prompt for a claim agent of ``dimension``."""
+    """The frozen system prompt for a claim agent of ``dimension``, with its signal rules if it has any."""
     allowed = sorted(ALLOWED_FALSIFIER_DIMENSIONS[dimension], key=lambda d: d.value)
+    signal_rules = [text] if (text := signal_rules_text(dimension)) else []
     return "\n\n".join([
         "You work inside a sealed, offline equity research pipeline. You have no tools and no network. "
         "Your only input is a snapshot slice of evidence records, each with an evidence_id.",
@@ -125,6 +185,7 @@ def claim_system_prompt(dimension: Dimension) -> str:
         "cannot evaluate, and any claim whose falsifier could never fire.",
         COMMON_RULES,
         DSL_GUIDE,
+        *signal_rules,
         "Columns available to falsifiers:\n" + column_catalogue(allowed),
     ])
 

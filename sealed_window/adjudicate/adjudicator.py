@@ -18,9 +18,12 @@ ignored -- the auditor gets no special trust.
 
 Ranking (versioned constants, no model involved)::
 
-    score(stock) = sum over dimensions d of  w[d] * sum over surviving claims c of  sign(c) * confidence(c)
+    score(stock) = sum over dimensions d of  w[d] * sum over counted units u of  sign(u) * confidence(u)
 
-where ``sign`` is +1 for positive and -1 for negative claims.
+where ``sign`` is +1 for positive and -1 for negative. A *unit* is one side of one signal group --
+say, the positive side of "returns on capital" -- and counts the highest confidence among the surviving
+claims in it. A claim outside every group (its falsifier spans groups, or uses columns the signal table
+does not cover) is a unit of its own. See :func:`score_candidates`.
 """
 
 from __future__ import annotations
@@ -31,13 +34,18 @@ from typing import Mapping
 
 from ..claims import dsl
 from ..claims.schema import Adjudication, Claim, Direction, Refutation, Verdict
+from ..claims.signals import group_for_falsifier
 from ..claims.validator import validate_claim, validate_refutation
 from ..governance.audit import AuditLog
 from ..snapshot.columns import COLUMNS, FRESHNESS_SLA, Dimension
 from ..snapshot.hashing import stable_float
 from ..snapshot.store import SealedSnapshot
 
-RANKING_VERSION = "ranking-v1"
+RANKING_VERSION = "ranking-v2"
+"""v2 (26 Sep 2026): related claims count once per side of their signal group, at their highest
+confidence. v1 summed every surviving claim, so a profitable company collected ROCE, ROE and ROA above
+the sector as three claims -- qwen3:14b, given 26 signals, scored GESHIP +8.85 against Claude's +3.49
+largely by listing correlated strengths one by one."""
 
 DIMENSION_WEIGHTS: Mapping[Dimension, float] = MappingProxyType(
     {Dimension.FUNDAMENTAL: 1.0, Dimension.TECHNICAL: 0.8, Dimension.NEWS: 0.5}
@@ -206,24 +214,33 @@ class StockScore:
 def score_candidates(
     candidates: list[str], claims: list[Claim], verdicts: Mapping[str, Adjudication]
 ) -> list[StockScore]:
-    """Apply the ranking formula to every candidate and return scores sorted best first."""
+    """Apply the ranking formula to every candidate and return scores sorted best first.
+
+    ``positive`` and ``negative`` in each dimension's tally still count every surviving claim, so the
+    ledger shows what was argued; ``signed_confidence`` counts each group side once, so the score shows
+    how many distinct things were argued.
+    """
     scores = []
     for key in candidates:
         tallies = {d.value: {"positive": 0, "negative": 0, "signed_confidence": 0.0} for d in Dimension}
         max_negative_fundamental = 0.0
+        units: dict[tuple, tuple[Dimension, int, float]] = {}
         for claim in claims:
             verdict = verdicts.get(claim.claim_id)
             if claim.subject != key or verdict is None or verdict.verdict is not Verdict.SURVIVED:
                 continue
-            tally = tallies[claim.dimension.value]
-            if claim.direction is Direction.POSITIVE:
-                tally["positive"] += 1
-                tally["signed_confidence"] += claim.confidence
-            else:
-                tally["negative"] += 1
-                tally["signed_confidence"] -= claim.confidence
-                if claim.dimension is Dimension.FUNDAMENTAL:
-                    max_negative_fundamental = max(max_negative_fundamental, claim.confidence)
+            positive = claim.direction is Direction.POSITIVE
+            tallies[claim.dimension.value]["positive" if positive else "negative"] += 1
+            if not positive and claim.dimension is Dimension.FUNDAMENTAL:
+                max_negative_fundamental = max(max_negative_fundamental, claim.confidence)
+            # One side of one group is one unit; an ungrouped claim is a unit by itself.
+            group = group_for_falsifier(claim.falsifier, claim.dimension)
+            unit = (claim.dimension, group, positive) if group else (claim.claim_id,)
+            sign = 1 if positive else -1
+            if unit not in units or claim.confidence > units[unit][2]:
+                units[unit] = (claim.dimension, sign, claim.confidence)
+        for dimension, sign, confidence in units.values():
+            tallies[dimension.value]["signed_confidence"] += sign * confidence
         score = sum(DIMENSION_WEIGHTS[d] * tallies[d.value]["signed_confidence"] for d in Dimension)
         for tally in tallies.values():
             tally["signed_confidence"] = stable_float(tally["signed_confidence"])

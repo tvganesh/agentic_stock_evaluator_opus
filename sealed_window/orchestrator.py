@@ -337,7 +337,7 @@ class Orchestrator:
             key, dimension = task
             try:
                 return run_claim_agent(gateway=gateway, ledger=ledger, snapshot=snapshot,
-                                       instrument_key=key, dimension=dimension)
+                                       instrument_key=key, dimension=dimension, audit=audit)
             except (NoSlotAvailable, PromptOverBudget) as exc:
                 audit.record("claim.skipped", {"instrument_key": key, "dimension": dimension.value,
                                                "violation": type(exc).__name__, "message": str(exc)})
@@ -350,6 +350,10 @@ class Orchestrator:
         for batch in results:
             for claim in batch:
                 ordered.setdefault(claim.claim_id, claim)
+        relabelled = sum(1 for claim in ordered.values() if claim.direction_source == "signal_table")
+        if relabelled:
+            notes.append(f"{relabelled} claim direction(s) set from the signal table: the model's label "
+                         "contradicted the rule whose falsifier it copied")
         return list(ordered.values())
 
     def _veto_phase(

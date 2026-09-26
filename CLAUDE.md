@@ -108,6 +108,9 @@ the harness assigns those, so an agent analysing one company cannot emit a claim
 there is no score field anywhere. `dsl.py` (427 lines) is the falsifier language: a small predicate
 grammar over snapshot columns with hard limits on length, nesting and column count, plus the
 reachability check that discards a disproof condition no company in the market could ever trigger.
+`signals.py` is the signal table: for each of 26 indicators, a rule for and a rule against owning the
+stock, each with a falsifier proven (by test) to negate it, a comparability guard folded into that
+falsifier, and worked examples. The claim prompts are rendered from it, and ranking uses its groups.
 `validator.py` runs the parse-time checks — evidence must exist and belong to this company, quoted
 figures must appear in that evidence, the condition must use columns appropriate to the claim.
 
@@ -133,7 +136,9 @@ it produces says so.
 six verdicts: survived, refuted, unevaluable, rejected, vacuous, or vetoed. Only survivors count.
 Ranking is then fixed arithmetic over them — each surviving claim contributes its confidence, signed
 by direction, weighted by dimension (fundamental 1.0, technical 0.8, news 0.5, news lowest because it
-is the input written by strangers). No model computes the ranking.
+is the input written by strangers). Since `ranking-v2`, related claims count once: each side of a
+signal group (valuation, returns on capital, trend, ...) contributes its highest surviving confidence.
+No model computes the ranking.
 
 ## `publish/` — phase 6, the report
 
@@ -171,8 +176,16 @@ ledger where claims appear and are struck through as they are killed, and the do
 - **Numbers are computed in Python, never by a model.** A model interprets; it does not calculate.
 - **Every module, class, function and method carries a docstring** saying what it does and how it
   relates to the system. Nothing enforces this automatically — it holds by review, so keep it up.
-- **Tests require no network and no credentials.** `.venv/bin/python -m pytest -q` — 209 at present.
+- **Tests require no network and no credentials.** `.venv/bin/python -m pytest -q` — 226 at present.
 - **`data/` is not committed**: snapshots, audit logs, run artefacts and backtests are regenerable.
+
+---
+
+## Local models
+
+`LOCAL_MODEL_EXPERIMENTS.md` records the Qwen 3 work of 26 Sep 2026: every run against the Claude
+baseline, what each exposed, and the changes it led to (signal table, table-assigned directions,
+grouped ranking). Read it before changing prompts, the signal table or the ranking.
 
 ---
 
